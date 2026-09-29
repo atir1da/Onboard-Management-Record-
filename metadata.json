@@ -1,0 +1,10 @@
+{
+  "name": "Remix ShipBoard-AI",
+  "description": "An AI-integrated Shipboard Management System for automated maritime administration, STCW compliance scheduling, provisions logistics analytics, and official SOLAS/MARPOL reporting.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
