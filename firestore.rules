@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User profile documents
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId) && isValidId(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    // Bridge Watchkeeping entries
+    match /watches/{watchId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(watchId);
+      allow delete: if isSignedIn() && isValidId(watchId);
+    }
+
+    // Relieved Officer Watch History records
+    match /relieved_watches/{relievedWatchId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(relievedWatchId);
+      allow delete: if isSignedIn() && isValidId(relievedWatchId);
+    }
+
+    // Active Crew members
+    match /crew/{crewId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(crewId);
+      allow delete: if isSignedIn() && isValidId(crewId);
+    }
+
+    // Safety Drills and training records
+    match /safety_drills/{drillId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(drillId);
+      allow delete: if isSignedIn() && isValidId(drillId);
+    }
+  }
+}

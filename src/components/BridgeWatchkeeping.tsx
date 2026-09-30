@@ -53,6 +53,8 @@ import {
   isMasterRank, 
   syncDeckOfficersToBridgeWatches 
 } from "../utils/bridgeCrewSync";
+import { auth } from "../firebase";
+import { syncWatchToFirestore, subscribeToFirestoreWatches } from "../utils/firestoreSync";
 
 export type { WatchTelemetryLog };
 
@@ -678,6 +680,20 @@ export default function BridgeWatchkeeping() {
       setRelievedRecords(getStoredRelievedHistory());
     };
 
+    const unsubscribeAuth = auth.onAuthStateChanged(user => {
+      if (user) {
+        const saved = localStorage.getItem("sms_bridge_personal_watches");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(w => syncWatchToFirestore(w).catch(() => {}));
+            }
+          } catch (e) {}
+        }
+      }
+    });
+
     window.addEventListener("sms_crewList_changed", handleRosterUpdate);
     window.addEventListener("sms_user_profile_changed", handleUserProfileUpdate);
     window.addEventListener("sms_bridge_watches_updated", handleWatchesExternalUpdate);
@@ -685,6 +701,7 @@ export default function BridgeWatchkeeping() {
     window.addEventListener("storage", handleRosterUpdate);
 
     return () => {
+      unsubscribeAuth();
       window.removeEventListener("sms_crewList_changed", handleRosterUpdate);
       window.removeEventListener("sms_user_profile_changed", handleUserProfileUpdate);
       window.removeEventListener("sms_bridge_watches_updated", handleWatchesExternalUpdate);
@@ -799,9 +816,14 @@ export default function BridgeWatchkeeping() {
     status: "scheduled"
   });
 
-  // Save to localStorage whenever watch entries change
+  // Save to localStorage and sync to Firestore whenever watch entries change
   useEffect(() => {
     localStorage.setItem("sms_bridge_personal_watches", JSON.stringify(watchEntries));
+    if (auth.currentUser) {
+      watchEntries.forEach(w => {
+        syncWatchToFirestore(w).catch(() => {});
+      });
+    }
   }, [watchEntries]);
 
   // Save personal identity

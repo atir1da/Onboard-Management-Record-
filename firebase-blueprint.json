@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with seafarer credentials",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Auth UID of the user" },
+        "fullName": { "type": "string", "description": "Full legal seafarer name" },
+        "email": { "type": "string", "description": "Contact email address" },
+        "rank": { "type": "string", "description": "Maritime rank aboard vessel" },
+        "department": { "type": "string", "description": "Assigned shipboard department" },
+        "nationality": { "type": "string", "description": "Seafarer nationality" },
+        "seafarerId": { "type": "string", "description": "Official Seafarer ID book number" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["userId", "fullName", "rank", "department"]
+    },
+    "Watch": {
+      "title": "Watch",
+      "description": "Bridge Watchkeeping duty schedule and telemetry log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique watch identifier" },
+        "date": { "type": "string", "description": "Watch date YYYY-MM-DD" },
+        "startTime": { "type": "string", "description": "Start time HH:MM" },
+        "endTime": { "type": "string", "description": "End time HH:MM" },
+        "watchPeriodName": { "type": "string", "description": "Standard watch name" },
+        "status": { "type": "string", "description": "Scheduled, active, completed, or handed over" },
+        "loggedHours": { "type": "number", "description": "Watch duration hours" },
+        "chiefOfficerAssignment": { "type": "string", "description": "Chief officer standing directives" },
+        "chiefOfficerName": { "type": "string", "description": "Signatory Chief Officer" },
+        "activities": { "type": "string", "description": "Watch activity log remarks" },
+        "weatherConditions": { "type": "string", "description": "Sea and meteorological observations" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      },
+      "required": ["id", "date", "startTime", "endTime", "watchPeriodName", "status"]
+    },
+    "RelievedWatch": {
+      "title": "RelievedWatch",
+      "description": "Archived sea duty record for relieved officers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique relief record ID" },
+        "originalWatchId": { "type": "string", "description": "Reference watch ID" },
+        "date": { "type": "string", "description": "Date of watch" },
+        "startTime": { "type": "string", "description": "Start time" },
+        "endTime": { "type": "string", "description": "End time" },
+        "watchPeriodName": { "type": "string", "description": "Period title" },
+        "relievedOfficer": { "type": "string", "description": "Outgoing relieved officer label" },
+        "incomingOfficer": { "type": "string", "description": "Incoming relieving officer label" },
+        "handoverTimestamp": { "type": "string", "description": "Timestamp of relief handover" },
+        "handoverRemarks": { "type": "string", "description": "Directives and handover notes" },
+        "loggedHours": { "type": "number", "description": "Watch hours logged" },
+        "activities": { "type": "string", "description": "Operational duties performed" },
+        "archivedAt": { "type": "string", "description": "ISO archive timestamp" }
+      },
+      "required": ["id", "date", "relievedOfficer", "incomingOfficer"]
+    },
+    "CrewMember": {
+      "title": "CrewMember",
+      "description": "Vessel crew member record by rank and department",
+      "type": "object",
+      "properties": {
+        "rank": { "type": "string", "description": "Shipboard crew rank" },
+        "name": { "type": "string", "description": "Full name of crew member" },
+        "department": { "type": "string", "description": "Department: Deck, Engine, or Catering" },
+        "nationality": { "type": "string", "description": "Country of nationality" },
+        "seafarerId": { "type": "string", "description": "Seafarer book number" },
+        "watchLabel": { "type": "string", "description": "Custom watch assignment label" },
+        "defaultWatch": { "type": "string", "description": "3-watch, 6-6, or Daywork preset" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      },
+      "required": ["rank", "name", "department"]
+    },
+    "SafetyDrill": {
+      "title": "SafetyDrill",
+      "description": "Shipboard SOLAS safety drill matrix item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Drill code identifier" },
+        "name": { "type": "string", "description": "Official drill title" },
+        "responsibility": { "type": "string", "description": "Designated Officer in Charge" },
+        "status": { "type": "string", "description": "Completed, Pending, or Not Done" },
+        "lastConducted": { "type": "string", "description": "Date last executed" },
+        "nextDue": { "type": "string", "description": "Target regulatory deadline" },
+        "periodMonths": { "type": "number", "description": "Regulatory interval in months" },
+        "description": { "type": "string", "description": "Operational protocol summary" },
+        "time": { "type": "string", "description": "Scheduled start time" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      },
+      "required": ["id", "name", "responsibility", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile documents"
+    },
+    "/watches/{watchId}": {
+      "schema": { "$ref": "#/entities/Watch" },
+      "description": "Bridge watchkeeping schedule and duty logs"
+    },
+    "/relieved_watches/{relievedWatchId}": {
+      "schema": { "$ref": "#/entities/RelievedWatch" },
+      "description": "Archived duties of relieved officers"
+    },
+    "/crew/{crewId}": {
+      "schema": { "$ref": "#/entities/CrewMember" },
+      "description": "Active crew registry documents"
+    },
+    "/safety_drills/{drillId}": {
+      "schema": { "$ref": "#/entities/SafetyDrill" },
+      "description": "Safety drills and training exercises"
+    }
+  }
+}
