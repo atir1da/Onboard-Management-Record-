@@ -13,9 +13,17 @@ import {
   Globe2, 
   Sparkles,
   Layers,
-  Clock
+  Clock,
+  CalendarDays
 } from "lucide-react";
-import { UserProfile, DEPARTMENT_RANKS, getStoredUserProfile } from "../types/userProfile";
+import { 
+  UserProfile, 
+  DEPARTMENT_RANKS, 
+  getStoredUserProfile,
+  calculateSignOffDate,
+  getRemainingContractDays,
+  getTotalContractDays
+} from "../types/userProfile";
 import { WORLDWIDE_NATIONALITIES } from "../constants/maritimeData";
 import { syncUserProfileWithSystem } from "../utils/userProfileSync";
 import { useFirebase } from "../context/FirebaseContext";
@@ -34,6 +42,9 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
   const [fullName, setFullName] = useState<string>("");
   const [seafarerId, setSeafarerId] = useState<string>("");
   const [nationality, setNationality] = useState<string>("Filipino");
+  const [contractDurationMonths, setContractDurationMonths] = useState<number>(12);
+  const [signOnDate, setSignOnDate] = useState<string>("2026-01-05");
+  const [signOffDate, setSignOffDate] = useState<string>("2027-01-05");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
 
@@ -46,6 +57,11 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
       setFullName(current.fullName || "");
       setSeafarerId(current.seafarerId || "");
       setNationality(current.nationality || "Filipino");
+      const duration = current.contractDurationMonths || 12;
+      const signOn = current.signOnDate || "2026-01-05";
+      setContractDurationMonths(duration);
+      setSignOnDate(signOn);
+      setSignOffDate(current.signOffDate || calculateSignOffDate(signOn, duration));
       setErrorMsg("");
       setSavedSuccess(false);
     }
@@ -77,6 +93,9 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
       rank,
       seafarerId: seafarerId.trim().toUpperCase(),
       nationality,
+      contractDurationMonths: Number(contractDurationMonths) || 12,
+      signOnDate: signOnDate || "2026-01-05",
+      signOffDate: signOffDate || calculateSignOffDate(signOnDate || "2026-01-05", Number(contractDurationMonths) || 12),
       email: currentUser?.email || profile.email || "",
       userId: currentUser?.uid || profile.userId,
       isLoggedIn: true
@@ -93,6 +112,9 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
         rank: updatedProfile.rank,
         seafarerId: updatedProfile.seafarerId,
         nationality: updatedProfile.nationality,
+        contractDurationMonths: updatedProfile.contractDurationMonths,
+        signOnDate: updatedProfile.signOnDate,
+        signOffDate: updatedProfile.signOffDate,
         email: currentUser.email || ""
       }).catch(err => console.error("Firestore profile update error:", err));
     }
@@ -311,6 +333,128 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
                 ))}
               </select>
               <Globe2 className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+            </div>
+          </div>
+
+          {/* Sea Service Contract Parameters (Contract Duration 1-12 Months, Sign-On Date, Sign-Off Date) */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-[#00A86B]" />
+                <span className="text-[11px] font-mono uppercase font-bold text-[#0A2540]">
+                  Sea Duty Contract Parameters (1–12 Months Dynamic Sync)
+                </span>
+              </div>
+              <span className="text-[9px] font-mono px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold uppercase border border-emerald-300">
+                STCW Sea Duty Sync
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              {/* Contract Duration Selector (1 to 12 Months) */}
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1 flex items-center justify-between">
+                  <span>Contract Duration *</span>
+                  <span className="text-[9px] text-[#00A86B] font-bold">1 to 12 Mos</span>
+                </label>
+                <select
+                  value={contractDurationMonths}
+                  onChange={(e) => {
+                    const val = Math.max(1, Math.min(12, parseInt(e.target.value) || 12));
+                    setContractDurationMonths(val);
+                    if (signOnDate) {
+                      setSignOffDate(calculateSignOffDate(signOnDate, val));
+                    }
+                  }}
+                  className="w-full bg-white border border-slate-200 px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-[#0A2540] cursor-pointer"
+                >
+                  <option value={1}>1 Month</option>
+                  <option value={2}>2 Months</option>
+                  <option value={3}>3 Months (1 Quarter / Bosun Phase)</option>
+                  <option value={4}>4 Months (Standard 4-Mo Turnaround)</option>
+                  <option value={5}>5 Months</option>
+                  <option value={6}>6 Months (Standard 6-Mo Contract)</option>
+                  <option value={7}>7 Months</option>
+                  <option value={8}>8 Months</option>
+                  <option value={9}>9 Months (Standard Officer Rotation)</option>
+                  <option value={10}>10 Months</option>
+                  <option value={11}>11 Months</option>
+                  <option value={12}>12 Months (Full STCW Cadet Year)</option>
+                </select>
+
+                {/* Quick Selection Pills */}
+                <div className="flex items-center gap-1 mt-1.5">
+                  {[1, 3, 6, 9, 12].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        setContractDurationMonths(m);
+                        if (signOnDate) {
+                          setSignOffDate(calculateSignOffDate(signOnDate, m));
+                        }
+                      }}
+                      className={`text-[9px] font-mono font-bold px-1.5 py-0.5 border cursor-pointer transition-all ${
+                        contractDurationMonths === m
+                          ? "bg-[#0A2540] text-white border-[#0A2540]"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      {m}M
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sign-On Date */}
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
+                  Sign-On Date *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={signOnDate}
+                  onChange={(e) => {
+                    const newSignOn = e.target.value;
+                    setSignOnDate(newSignOn);
+                    if (newSignOn && contractDurationMonths) {
+                      setSignOffDate(calculateSignOffDate(newSignOn, contractDurationMonths));
+                    }
+                  }}
+                  className="w-full bg-white border border-slate-200 px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                />
+                <span className="block text-[9px] font-mono text-slate-400 mt-1 truncate">
+                  Port: Active Vessel Sign-On
+                </span>
+              </div>
+
+              {/* Calculated Sign-Off Date */}
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1 flex items-center justify-between">
+                  <span>Sign-Off Date</span>
+                  <span className="text-[9px] text-[#00A86B] font-bold lowercase">auto / edit</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={signOffDate}
+                  onChange={(e) => setSignOffDate(e.target.value)}
+                  className="w-full bg-white border border-slate-200 px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                />
+                <span className="block text-[9px] font-mono text-emerald-600 font-semibold mt-1 truncate">
+                  Syncs to +{contractDurationMonths} Months
+                </span>
+              </div>
+            </div>
+
+            {/* Contract Timeline summary badge */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[10px] font-mono bg-white p-2 border border-slate-200 text-slate-600">
+              <div className="flex items-center gap-3">
+                <span>Remaining: <strong className="text-[#0A2540]">{getRemainingContractDays(signOffDate, undefined, signOnDate)} Days</strong></span>
+                <span>Total Span: <strong className="text-slate-700">{getTotalContractDays(signOnDate, signOffDate)} Days</strong> ({contractDurationMonths} Months)</span>
+              </div>
+              <span className="text-emerald-700 font-semibold">Auto-Syncs Bridge Watches &amp; Cadet Phases</span>
             </div>
           </div>
 

@@ -34,7 +34,8 @@ import {
   ChevronDown,
   ChevronUp,
   History,
-  ArrowRightLeft
+  ArrowRightLeft,
+  FileSpreadsheet
 } from "lucide-react";
 import DutiesTotalHoursView from "./DutiesTotalHoursView";
 import RelievedOfficerWatchHistoryView, {
@@ -42,7 +43,13 @@ import RelievedOfficerWatchHistoryView, {
   getStoredRelievedHistory,
   saveRelievedHistory
 } from "./RelievedOfficerWatchHistoryView";
-import { getStoredUserProfile, UserProfile } from "../types/userProfile";
+import { exportBridgeWatchkeepingBackup } from "../utils/excelBackup";
+import { 
+  getStoredUserProfile, 
+  UserProfile, 
+  getRemainingContractDays, 
+  calculateSignOffDate 
+} from "../types/userProfile";
 import { 
   WatchTelemetryLog, 
   TelemetryFormModal, 
@@ -937,7 +944,14 @@ export default function BridgeWatchkeeping() {
 
   // Open Add Modal
   const openAddWatchModal = (targetDate?: string) => {
-    const defaultDate = targetDate || selectedDateStr || "2026-09-27";
+    const contractStart = currentUserProfile.signOnDate || "2026-01-05";
+    const contractEnd = currentUserProfile.signOffDate || "2027-01-05";
+
+    let defaultDate = targetDate || selectedDateStr || "2026-09-27";
+    // Constrain defaultDate within active contract window [contractStart, contractEnd]
+    if (defaultDate < contractStart) defaultDate = contractStart;
+    if (defaultDate > contractEnd) defaultDate = contractEnd;
+
     const initialOow = deckRoster.officers.find(o => 
       o.label.toLowerCase().includes(personalIdentity.toLowerCase()) || 
       personalIdentity.toLowerCase().includes(o.label.toLowerCase())
@@ -953,7 +967,9 @@ export default function BridgeWatchkeeping() {
       || "Ordinary Seaman (OS) - Muhammad Ali";
 
     setScheduleMode("single");
-    setRangeEndDate("2026-10-05");
+    // Pre-fill rangeEndDate within contract window
+    const defaultRangeEnd = contractEnd < "2026-10-15" ? contractEnd : "2026-10-05";
+    setRangeEndDate(defaultRangeEnd > defaultDate ? defaultRangeEnd : contractEnd);
 
     setFormData({
       date: defaultDate,
@@ -971,6 +987,89 @@ export default function BridgeWatchkeeping() {
       status: "scheduled"
     });
     setShowAddModal(true);
+  };
+
+  // Auto-generate recurring watchkeeping schedule constrained within Sign-On to Sign-Off contract window
+  const handleAutoGenerateContractSchedule = (daysCount: number = 30) => {
+    const contractStart = currentUserProfile.signOnDate || "2026-01-05";
+    const contractEnd = currentUserProfile.signOffDate || "2027-01-05";
+
+    // Determine current user's officer watch rotation preset:
+    const rankLower = (currentUserProfile.rank || "").toLowerCase();
+    let shifts: { startTime: string; endTime: string; name: string }[] = [];
+
+    if (rankLower.includes("chief")) {
+      shifts = [
+        { startTime: "04:00", endTime: "08:00", name: "04:00–08:00 Morning Watch" },
+        { startTime: "16:00", endTime: "20:00", name: "16:00–20:00 Last Dog / Combined Watch" }
+      ];
+    } else if (rankLower.includes("third") || rankLower.includes("3rd") || rankLower.includes("cadet")) {
+      shifts = [
+        { startTime: "08:00", endTime: "12:00", name: "08:00–12:00 Forenoon Watch" },
+        { startTime: "20:00", endTime: "00:00", name: "20:00–00:00 First Watch" }
+      ];
+    } else {
+      // Default: 2nd Officer
+      shifts = [
+        { startTime: "00:00", endTime: "04:00", name: "00:00–04:00 Middle Watch (Grave Watch)" },
+        { startTime: "12:00", endTime: "16:00", name: "12:00–16:00 Afternoon Watch" }
+      ];
+    }
+
+    const startD = contractStart;
+    const [sY, sM, sDay] = startD.split("-").map(Number);
+    const targetEnd = new Date(sY, sM - 1, sDay + daysCount);
+    const [eY, eM, eD] = contractEnd.split("-").map(Number);
+    const maxEnd = new Date(eY, eM - 1, eD);
+    const finalEnd = targetEnd < maxEnd ? targetEnd : maxEnd;
+    const finalEndY = finalEnd.getFullYear();
+    const finalEndM = String(finalEnd.getMonth() + 1).padStart(2, "0");
+    const finalEndD = String(finalEnd.getDate()).padStart(2, "0");
+    const finalEndDateStr = `${finalEndY}-${finalEndM}-${finalEndD}`;
+
+    const dateList = getDatesInRange(startD, finalEndDateStr);
+    const existingKeys = new Set(watchEntries.map(w => `${w.date}-${w.startTime}-${w.team.oow}`));
+
+    const newGenerated: WatchEntry[] = [];
+    dateList.forEach((curDate, dIdx) => {
+      shifts.forEach((shift, sIdx) => {
+        const key = `${curDate}-${shift.startTime}-${personalIdentity}`;
+        if (!existingKeys.has(key)) {
+          newGenerated.push({
+            id: `w-auto-${curDate}-${shift.startTime.replace(":", "")}-${Date.now()}-${dIdx}-${sIdx}`,
+            date: curDate,
+            startTime: shift.startTime,
+            endTime: shift.endTime,
+            watchPeriodName: shift.name,
+            team: {
+              oow: personalIdentity,
+              helmsman: "AB-1 Esteban Santos",
+              lookout: "OS Muhammad Ali"
+            },
+            chiefOfficerAssignment: "Standard STCW Bridge Watchkeeping Order: Maintain continuous radar plotting and lookout.",
+            chiefOfficerName: "Mateo Rodriguez (Chief Officer)",
+            activities: "STCW Routine Bridge Navigation Watchkeeping.",
+            weatherConditions: "Wind NE F3-4, Sea slight-moderate, Baro 1013 hPa, Good Vis",
+            status: curDate < "2026-09-27" ? "completed" : "scheduled",
+            loggedHours: 4,
+            isPersonalWatch: true
+          });
+        }
+      });
+    });
+
+    if (newGenerated.length === 0) {
+      triggerNotification("Contract watchkeeping schedule is already generated for this period.");
+      return;
+    }
+
+    setWatchEntries(prev => [...newGenerated, ...prev].sort((a, b) => {
+      const comp = b.date.localeCompare(a.date);
+      if (comp !== 0) return comp;
+      return b.startTime.localeCompare(a.startTime);
+    }));
+
+    triggerNotification(`Generated ${newGenerated.length} watch duties across contract window (${startD} to ${finalEndDateStr}).`);
   };
 
   // Open Edit Modal
@@ -1022,6 +1121,14 @@ export default function BridgeWatchkeeping() {
       return;
     }
 
+    const contractStart = currentUserProfile.signOnDate || "2026-01-05";
+    const contractEnd = currentUserProfile.signOffDate || "2027-01-05";
+
+    if (formData.date < contractStart || formData.date > contractEnd) {
+      alert(`Notice: Watch date (${formData.date}) is outside your active contract window (${contractStart} to ${contractEnd}). Please constrain within contract period.`);
+      return;
+    }
+
     const duration = calculateWatchHours(formData.startTime, formData.endTime);
     const isPersonal = formData.oow.toLowerCase().includes(personalIdentity.toLowerCase()) || 
                        personalIdentity.toLowerCase().includes(formData.oow.toLowerCase());
@@ -1030,6 +1137,10 @@ export default function BridgeWatchkeeping() {
     if (scheduleMode === "range") {
       if (!rangeEndDate || rangeEndDate < formData.date) {
         alert("Please specify a valid End Date that is on or after the Start Date.");
+        return;
+      }
+      if (rangeEndDate > contractEnd) {
+        alert(`Notice: End date (${rangeEndDate}) exceeds Contract Sign-Off date (${contractEnd}). Please constrain within the contract window.`);
         return;
       }
       const dateList = getDatesInRange(formData.date, rangeEndDate);
@@ -1464,6 +1575,27 @@ export default function BridgeWatchkeeping() {
                 )}
               </select>
             </div>
+
+            <button
+              onClick={() => handleAutoGenerateContractSchedule(30)}
+              className="px-3.5 py-1.5 bg-[#0A2540] hover:bg-slate-800 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer border border-[#334155]"
+              title="Automatically pre-fill default watchkeeping rotation shifts strictly within active contract window"
+            >
+              <CalendarDays className="w-4 h-4 text-emerald-400" />
+              Sync Contract Schedule (30d)
+            </button>
+
+            <button
+              onClick={() => {
+                const fname = exportBridgeWatchkeepingBackup();
+                triggerNotification(`✓ Bridge Watchkeeping data successfully backed up to Excel (${fname})`);
+              }}
+              className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Backup complete watch schedules, telemetry logs & duty totals to Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+              Backup to Excel
+            </button>
 
             <button
               onClick={() => openAddWatchModal()}
@@ -2190,15 +2322,44 @@ export default function BridgeWatchkeeping() {
                   </button>
                 </div>
 
+                {/* Contract Sync & Constraint Banner */}
+                <div className="bg-emerald-50 border border-emerald-200 p-2.5 text-[11px] font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <div>
+                      <span className="font-bold text-emerald-950 block">
+                        Contract Window: {currentUserProfile.signOnDate || "2026-01-05"} → {currentUserProfile.signOffDate || "2027-01-05"}
+                      </span>
+                      <span className="text-[10px] text-emerald-800">
+                        {currentUserProfile.contractDurationMonths || 12} Months Duration · {getRemainingContractDays(currentUserProfile.signOffDate)} Days Remaining
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScheduleMode("range");
+                      setFormData(prev => ({ ...prev, date: currentUserProfile.signOnDate || "2026-01-05" }));
+                      setRangeEndDate(currentUserProfile.signOffDate || "2027-01-05");
+                    }}
+                    className="text-[10px] bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2 py-1 uppercase tracking-wide cursor-pointer transition-colors shrink-0"
+                  >
+                    Fill Entire Contract
+                  </button>
+                </div>
+
                 {/* 1. Date Inputs & Maritime Watch Presets */}
                 {scheduleMode === "single" ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
-                        Watch Date (YYYY-MM-DD)
+                      <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1 flex items-center justify-between">
+                        <span>Watch Date (YYYY-MM-DD)</span>
+                        <span className="text-[9px] text-emerald-600 font-bold lowercase">contract constrained</span>
                       </label>
                       <input
                         type="date"
+                        min={currentUserProfile.signOnDate || "2026-01-05"}
+                        max={currentUserProfile.signOffDate || "2027-01-05"}
                         value={formData.date}
                         onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-800 font-mono focus:outline-none focus:border-[#00A86B]"
@@ -2227,10 +2388,12 @@ export default function BridgeWatchkeeping() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
-                          Start Date (e.g. 05 Oct 2026)
+                          Start Date (e.g. {currentUserProfile.signOnDate || "2026-01-05"})
                         </label>
                         <input
                           type="date"
+                          min={currentUserProfile.signOnDate || "2026-01-05"}
+                          max={currentUserProfile.signOffDate || "2027-01-05"}
                           value={formData.date}
                           onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                           className="w-full bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 font-mono focus:outline-none focus:border-[#00A86B]"
@@ -2239,10 +2402,12 @@ export default function BridgeWatchkeeping() {
 
                       <div>
                         <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
-                          End Date (e.g. 28 Oct 2026)
+                          End Date (max {currentUserProfile.signOffDate || "2027-01-05"})
                         </label>
                         <input
                           type="date"
+                          min={formData.date || currentUserProfile.signOnDate || "2026-01-05"}
+                          max={currentUserProfile.signOffDate || "2027-01-05"}
                           value={rangeEndDate}
                           onChange={(e) => setRangeEndDate(e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 font-mono focus:outline-none focus:border-[#00A86B]"

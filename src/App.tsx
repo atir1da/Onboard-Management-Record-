@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  Droplet, 
   Clock, 
   Flame, 
   Compass, 
@@ -16,7 +15,6 @@ import {
   Sparkles,
   Layers,
   Map,
-  Scale,
   Cloud,
   Database,
   LogIn,
@@ -24,21 +22,20 @@ import {
   GraduationCap
 } from "lucide-react";
 
-import ProvisionsAnalytics from "./components/ProvisionsAnalytics";
 import BridgeWatchkeeping from "./components/BridgeWatchkeeping";
 import SafetyDrills from "./components/SafetyDrills";
 import DepartmentDirectory from "./components/DepartmentDirectory";
 import VoyagePlanning from "./components/VoyagePlanning";
 import VesselProfile from "./components/VesselProfile";
-import LoadBallast from "./components/LoadBallast";
 import UserProfileModal from "./components/UserProfileModal";
 import AuthScreen from "./components/AuthScreen";
 import CadetReportTasks from "./components/CadetReportTasks";
+import ExcelBackupButton from "./components/ExcelBackupButton";
 import { UserProfile, getStoredUserProfile } from "./types/userProfile";
 import { WORLDWIDE_FLAGS } from "./constants/maritimeData";
 import { useFirebase } from "./context/FirebaseContext";
 
-type ActiveTab = "vessel" | "load_ballast" | "departments" | "provisions" | "bridge" | "drills" | "planning" | "cadet_tasks";
+type ActiveTab = "vessel" | "departments" | "bridge" | "drills" | "planning" | "cadet_tasks";
 
 export default function App() {
   const { currentUser, isAuthReady, isConnected, userProfile, isProfileComplete, logout } = useFirebase();
@@ -475,18 +472,6 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab("load_ballast")}
-            className={`px-4 py-2 text-xs font-bold tracking-wider uppercase flex items-center gap-2 cursor-pointer transition-all border ${
-              activeTab === "load_ballast"
-                ? "bg-[#0A2540] text-white border-[#0A2540] shadow-sm"
-                : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <Scale className="w-3.5 h-3.5 shrink-0" />
-            LOAD & BALLAST
-          </button>
-
-          <button
             onClick={() => setActiveTab("departments")}
             className={`px-4 py-2 text-xs font-bold tracking-wider uppercase flex items-center gap-2 cursor-pointer transition-all border ${
               activeTab === "departments"
@@ -496,18 +481,6 @@ export default function App() {
           >
             <Layers className="w-3.5 h-3.5 shrink-0" />
             Departments & Crew
-          </button>
-
-          <button
-            onClick={() => setActiveTab("provisions")}
-            className={`px-4 py-2 text-xs font-bold tracking-wider uppercase flex items-center gap-2 cursor-pointer transition-all border ${
-              activeTab === "provisions"
-                ? "bg-[#0A2540] text-white border-[#0A2540] shadow-sm"
-                : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <Droplet className="w-3.5 h-3.5 shrink-0" />
-            Provisions & Logistics
           </button>
 
           <button
@@ -656,25 +629,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {activeTab === "load_ballast" && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <LoadBallast 
-                vesselConfigType={vesselConfigType}
-                setVesselConfigType={setVesselConfigType}
-                dwt={dwt}
-                lightship={lightship}
-                freshWaterMax={freshWaterMax}
-                fuelCapacity={fuelCapacity}
-                vesselName={vesselName}
-                callSign={callSign}
-              />
-            </motion.div>
-          )}
-
           {activeTab === "departments" && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
@@ -682,16 +636,6 @@ export default function App() {
               transition={{ duration: 0.3 }}
             >
               <DepartmentDirectory />
-            </motion.div>
-          )}
-
-          {activeTab === "provisions" && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <ProvisionsAnalytics />
             </motion.div>
           )}
 
@@ -734,6 +678,22 @@ export default function App() {
               <CadetReportTasks />
             </motion.div>
           )}
+        </div>
+
+        {/* Dedicated Bottom-Left Backup Action Bar across all tabs */}
+        <div className="sticky bottom-2 left-0 z-30 pt-6 pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pointer-events-auto">
+          <ExcelBackupButton
+            activeTab={activeTab}
+            vesselName={vesselName}
+            imoNumber={imoNumber}
+            callSign={callSign}
+            flagState={flagState}
+            userProfile={currentUserProfile}
+          />
+          <div className="text-[10px] font-mono text-slate-500 bg-white/95 border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-[#00A86B] animate-pulse" />
+            <span>SOLAS &amp; STCW Excel Backup Generator (.xlsx) · Auto-Formatted Workbooks</span>
+          </div>
         </div>
       </main>
 

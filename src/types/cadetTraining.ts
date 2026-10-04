@@ -164,3 +164,138 @@ export const ROTATION_PHASES: Record<CadetRotationPhase, PhaseInfo> = {
     ]
   }
 };
+
+/**
+ * Calculates start, end dates, calendar initial date, and month list for a rotation phase based on Sign-On Date & Contract Duration (1 to 12 Months)
+ */
+export function getDynamicPhaseDates(
+  phase: CadetRotationPhase, 
+  signOnDateStr: string = "2026-01-05",
+  contractDurationMonths: number = 12
+) {
+  let year = 2026, month = 1, day = 5;
+  if (signOnDateStr) {
+    if (signOnDateStr.includes("/")) {
+      const p = signOnDateStr.split("/").map(Number);
+      if (p.length === 3) {
+        day = p[0] || 5;
+        month = p[1] || 1;
+        year = p[2] || 2026;
+      }
+    } else {
+      const p = signOnDateStr.split("-").map(Number);
+      if (p.length === 3) {
+        year = p[0] || 2026;
+        month = p[1] || 1;
+        day = p[2] || 5;
+      }
+    }
+  }
+
+  const duration = Math.max(1, Math.min(12, Number(contractDurationMonths) || 12));
+
+  let phaseIndex = 0;
+  switch (phase) {
+    case "bosun_assist":
+      phaseIndex = 0;
+      break;
+    case "third_officer_assist":
+      phaseIndex = 1;
+      break;
+    case "second_officer_assist":
+      phaseIndex = 2;
+      break;
+    case "chief_officer_assist":
+      phaseIndex = 3;
+      break;
+  }
+
+  const signOnDate = new Date(year, month - 1, day);
+  const signOffDate = new Date(year, month - 1 + duration, day);
+  const totalMs = signOffDate.getTime() - signOnDate.getTime();
+
+  let startDate: Date;
+  let endDate: Date;
+
+  if (duration === 12) {
+    const startM = phaseIndex * 3;
+    const endM = (phaseIndex + 1) * 3;
+    startDate = new Date(year, month - 1 + startM, day);
+    endDate = new Date(year, month - 1 + endM, day);
+  } else if (duration % 4 === 0) {
+    const monthsPerPhase = duration / 4;
+    const startM = phaseIndex * monthsPerPhase;
+    const endM = (phaseIndex + 1) * monthsPerPhase;
+    startDate = new Date(year, month - 1 + startM, day);
+    endDate = new Date(year, month - 1 + endM, day);
+  } else {
+    const startMs = signOnDate.getTime() + (phaseIndex / 4) * totalMs;
+    const endMs = signOnDate.getTime() + ((phaseIndex + 1) / 4) * totalMs;
+    startDate = new Date(startMs);
+    endDate = new Date(endMs);
+  }
+
+  const startY = startDate.getFullYear();
+  const startM = String(startDate.getMonth() + 1).padStart(2, "0");
+  const startD = String(startDate.getDate()).padStart(2, "0");
+  const startDateStr = `${startY}-${startM}-${startD}`;
+
+  const endY = endDate.getFullYear();
+  const endM = String(endDate.getMonth() + 1).padStart(2, "0");
+  const endD = String(endDate.getDate()).padStart(2, "0");
+  const endDateStr = `${endY}-${endM}-${endD}`;
+
+  const formatShort = (d: Date) => {
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  };
+
+  const dateRangeLabel = `${formatShort(startDate)} – ${formatShort(endDate)}`;
+
+  // Human-readable period label tailored to the contract duration
+  let periodLabel = "";
+  if (duration === 12) {
+    const rangeStarts = [1, 4, 7, 10];
+    const rangeEnds = [3, 6, 9, 12];
+    periodLabel = `Months ${rangeStarts[phaseIndex]}–${rangeEnds[phaseIndex]}`;
+  } else if (duration % 4 === 0) {
+    const monthsPerPhase = duration / 4;
+    const s = phaseIndex * monthsPerPhase + 1;
+    const e = (phaseIndex + 1) * monthsPerPhase;
+    periodLabel = s === e ? `Month ${s} of ${duration}` : `Months ${s}–${e} of ${duration}`;
+  } else {
+    const s = ((phaseIndex / 4) * duration).toFixed(1);
+    const e = (((phaseIndex + 1) / 4) * duration).toFixed(1);
+    periodLabel = `Phase ${phaseIndex + 1} (M ${s}–${e} / ${duration}M)`;
+  }
+
+  // Calculate distinct calendar months for this rotation phase
+  const phaseMonths: { date: Date; label: string; monthIndex: number }[] = [];
+  const curr = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  const lastMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  let guard = 0;
+  while (curr <= lastMonth && guard < 12) {
+    const mLabel = curr.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    phaseMonths.push({ 
+      date: new Date(curr), 
+      label: mLabel, 
+      monthIndex: curr.getMonth() + 1 
+    });
+    curr.setMonth(curr.getMonth() + 1);
+    guard++;
+  }
+  if (phaseMonths.length === 0) {
+    const mLabel = startDate.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    phaseMonths.push({ date: new Date(startDate.getFullYear(), startDate.getMonth(), 1), label: mLabel, monthIndex: 1 });
+  }
+
+  return {
+    startDate,
+    endDate,
+    startDateStr,
+    endDateStr,
+    dateRangeLabel,
+    periodLabel,
+    calendarInitialDate: new Date(startDate.getFullYear(), startDate.getMonth(), 1),
+    phaseMonths
+  };
+}

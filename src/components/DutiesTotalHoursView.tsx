@@ -13,10 +13,17 @@ import {
   ShieldCheck,
   Ship,
   TrendingUp,
-  SlidersHorizontal
+  SlidersHorizontal,
+  CalendarDays,
+  Hourglass
 } from "lucide-react";
 import { WatchEntry } from "./BridgeWatchkeeping";
 import { isMasterRank, getOfficerRole } from "../utils/bridgeCrewSync";
+import { 
+  getStoredUserProfile, 
+  calculateSignOffDate, 
+  getRemainingContractDays 
+} from "../types/userProfile";
 
 interface DutiesTotalHoursViewProps {
   watchEntries: WatchEntry[];
@@ -61,6 +68,20 @@ export default function DutiesTotalHoursView({
   watchEntries,
   personalIdentity
 }: DutiesTotalHoursViewProps) {
+  const [userProfile, setUserProfile] = useState(() => getStoredUserProfile());
+
+  useEffect(() => {
+    const handleProfileChange = () => {
+      setUserProfile(getStoredUserProfile());
+    };
+    window.addEventListener("sms_user_profile_changed", handleProfileChange);
+    window.addEventListener("storage", handleProfileChange);
+    return () => {
+      window.removeEventListener("sms_user_profile_changed", handleProfileChange);
+      window.removeEventListener("storage", handleProfileChange);
+    };
+  }, []);
+
   // Dynamic Deck Crew sync from DEPARTMENTS & CREW
   const [deckCrewList, setDeckCrewList] = useState<any[]>(() => {
     try {
@@ -289,172 +310,239 @@ export default function DutiesTotalHoursView({
     return list.sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
   }, [watchEntries, selectedOfficerFilter]);
 
+  // Contract Duration & Sea Duty Projections
+  const contractDurationMonths = userProfile.contractDurationMonths || 12;
+  const contractSignOn = userProfile.signOnDate || "2026-01-05";
+  const contractSignOff = userProfile.signOffDate || calculateSignOffDate(contractSignOn, contractDurationMonths);
+  const remainingContractDays = getRemainingContractDays(contractSignOff, undefined, contractSignOn);
+
+  // STCW Watchkeeping formula: Standard OOW stands 2 x 4h watches per day = 8 watch hours per sea day
+  const estimatedRemainingWatchHours = remainingContractDays * 8;
+  const totalProjectedWatchHours = seaServiceTotal.totalHours + estimatedRemainingWatchHours;
+  const totalProjectedSeaDays = (totalProjectedWatchHours / 8).toFixed(1);
+
   return (
     <div className="space-y-6">
-      {/* 1. TOP CARDS: SIGN-OFF SEA SERVICE TOTAL & MONTHLY DUTY TOTAL */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+      {/* 1. TOP CARDS: SIGN-OFF SEA SERVICE TOTAL, CONTRACT PROJECTION & MONTHLY DUTY TOTAL */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         
         {/* Card 1: Sign-off Sea Service Total */}
-        <div className="bg-white border-2 border-[#0A2540] p-5 shadow-sm relative overflow-hidden">
+        <div className="bg-white border-2 border-[#0A2540] p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50/50 rounded-bl-full pointer-events-none -mr-6 -mt-6" />
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <Award className="w-5 h-5 text-[#00A86B]" />
-              <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
-                Sign-off Sea Service Total
-              </h3>
-            </div>
-            <span className="text-[10px] font-mono font-bold bg-[#0A2540] text-white px-2 py-0.5 uppercase">
-              STCW Endorsement
-            </span>
-          </div>
-
-          {/* Candidate selector */}
-          <div className="mt-3 flex items-center justify-between text-xs">
-            <span className="text-[10px] font-mono text-slate-500 uppercase font-bold">Sea Service Record For:</span>
-            <select
-              value={selectedCandidate}
-              onChange={(e) => setSelectedCandidate(e.target.value)}
-              className="bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-[#0A2540] px-2 py-1 focus:outline-none cursor-pointer max-w-[200px]"
-            >
-              <option value="candidate">My Active Profile ({personalIdentity.split(" - ")[0]})</option>
-              <option value="second">2nd Officer ({activeDeckOfficers.secondName})</option>
-              <option value="third">3rd Officer ({activeDeckOfficers.thirdName})</option>
-              <option value="chief">Chief Officer ({activeDeckOfficers.chiefName})</option>
-              <option value="all">All Watchstanding Deck Officers Combined</option>
-            </select>
-          </div>
-
-          <div className="mt-3 flex items-baseline gap-3">
-            <span className="text-3xl font-black text-[#0A2540] tabular-nums font-mono">
-              {seaServiceTotal.totalHours}
-            </span>
-            <span className="text-xs font-bold text-slate-500 uppercase font-mono">Watch Hours Served as OOW</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-100 text-xs font-mono">
-            <div>
-              <span className="text-[10px] text-slate-400 block uppercase">Equiv. Sea Days</span>
-              <span className="font-bold text-slate-800 text-sm">{seaServiceTotal.seaDaysEquivalent} days</span>
-              <span className="text-[9px] text-slate-400 block font-sans">(8h sea watch/day)</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block uppercase">Duties Completed</span>
-              <span className="font-bold text-[#00A86B] text-sm">
-                {seaServiceTotal.completedWatches} / {seaServiceTotal.totalWatches} watches
+          <div>
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Award className="w-4 h-4 text-[#00A86B]" />
+                <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
+                  Sign-off Sea Service Total
+                </h3>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-[#0A2540] text-white px-2 py-0.5 uppercase">
+                STCW OOW
               </span>
-              <span className="text-[9px] text-slate-400 block font-sans">({seaServiceTotal.completedHours}h verified)</span>
+            </div>
+
+            {/* Candidate selector */}
+            <div className="mt-2.5 flex items-center justify-between text-xs">
+              <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Record For:</span>
+              <select
+                value={selectedCandidate}
+                onChange={(e) => setSelectedCandidate(e.target.value)}
+                className="bg-slate-50 border border-slate-200 text-[11px] font-mono font-bold text-[#0A2540] px-1.5 py-0.5 focus:outline-none cursor-pointer max-w-[170px] truncate"
+              >
+                <option value="candidate">My Active Profile ({personalIdentity.split(" - ")[0]})</option>
+                <option value="second">2nd Officer ({activeDeckOfficers.secondName})</option>
+                <option value="third">3rd Officer ({activeDeckOfficers.thirdName})</option>
+                <option value="chief">Chief Officer ({activeDeckOfficers.chiefName})</option>
+                <option value="all">All Watchstanding Deck Officers Combined</option>
+              </select>
+            </div>
+
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-[#0A2540] tabular-nums font-mono">
+                {seaServiceTotal.totalHours}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase font-mono">Verified OOW Hours</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-slate-100 text-xs font-mono">
+              <div>
+                <span className="text-[9px] text-slate-400 block uppercase">Equiv. Sea Days</span>
+                <span className="font-bold text-slate-800 text-xs">{seaServiceTotal.seaDaysEquivalent} days</span>
+                <span className="text-[8px] text-slate-400 block font-sans">(8h watch/day)</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-400 block uppercase">Duties Completed</span>
+                <span className="font-bold text-[#00A86B] text-xs">
+                  {seaServiceTotal.completedWatches} / {seaServiceTotal.totalWatches}
+                </span>
+                <span className="text-[8px] text-slate-400 block font-sans">({seaServiceTotal.completedHours}h logged)</span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 bg-slate-50 border border-slate-200 p-2 text-[10px] font-mono text-slate-600 flex items-center justify-between">
-            <span>Log Service Span:</span>
-            <span className="font-bold text-[#0A2540]">{seaServiceTotal.earliestDate} → {seaServiceTotal.latestDate}</span>
-          </div>
-
-          <div className="mt-2 text-[10px] font-mono text-slate-400 italic">
-            * Hours reflect shifts served as designated OOW. Assigned orders do not count as duty hours.
+          <div className="mt-3 bg-slate-50 border border-slate-200 p-1.5 text-[9px] font-mono text-slate-600 flex items-center justify-between">
+            <span>Log Span:</span>
+            <span className="font-bold text-[#0A2540] truncate ml-1">{seaServiceTotal.earliestDate} → {seaServiceTotal.latestDate}</span>
           </div>
         </div>
 
-        {/* Card 2: Monthly Duty Total */}
-        <div className="bg-white border border-slate-200 p-5 shadow-sm">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <CalendarIcon className="w-5 h-5 text-[#00A86B]" />
-              <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
-                Monthly Duty Total
-              </h3>
-            </div>
-
-            {/* Month Switcher */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => navigateMonth(-1)}
-                className="p-1 border border-slate-200 hover:bg-slate-100 transition-colors"
-                title="Previous Month"
-              >
-                <ChevronLeft className="w-3.5 h-3.5 text-slate-600" />
-              </button>
-              <span className="text-[11px] font-mono font-bold text-slate-800 px-1">
-                {monthLabel}
+        {/* Card 2: Contract Days Remaining & Estimated Total Watch Hours Before Sign-Off */}
+        <div className="bg-white border-2 border-emerald-600 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50/60 rounded-bl-full pointer-events-none -mr-6 -mt-6" />
+          <div>
+            <div className="flex items-center justify-between pb-2.5 border-b border-emerald-100">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-[#00A86B]" />
+                <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
+                  Contract Sea Duty Sync
+                </h3>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-emerald-600 text-white px-2 py-0.5 uppercase tracking-wide">
+                Sign-Off Est.
               </span>
-              <button
-                onClick={() => navigateMonth(1)}
-                className="p-1 border border-slate-200 hover:bg-slate-100 transition-colors"
-                title="Next Month"
-              >
-                <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-              </button>
+            </div>
+
+            <div className="mt-2.5 flex items-baseline justify-between">
+              <div>
+                <span className="text-2xl font-black text-emerald-700 tabular-nums font-mono">
+                  {remainingContractDays}
+                </span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase font-mono ml-1.5">
+                  Remaining Days
+                </span>
+              </div>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold uppercase">
+                {contractDurationMonths} Mos Contract
+              </span>
+            </div>
+
+            <div className="mt-2.5 bg-emerald-50/70 border border-emerald-200 p-2 text-xs font-mono space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-600 font-medium">Est. Hours to Sign-Off:</span>
+                <span className="font-black text-emerald-800">
+                  ~{estimatedRemainingWatchHours} hrs
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-500">
+                <span>Watch Basis:</span>
+                <span className="font-semibold text-slate-700">2 × 4h watches / day</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] border-t border-emerald-200/60 pt-1 text-slate-600">
+                <span>Total Projected at Sign-Off:</span>
+                <span className="font-black text-[#0A2540]">
+                  ~{totalProjectedWatchHours} hrs ({totalProjectedSeaDays} days)
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-4 flex items-baseline gap-3">
-            <span className="text-3xl font-black text-[#00A86B] tabular-nums font-mono">
-              {monthlyDutyTotal.totalHours}
-            </span>
-            <span className="text-xs font-bold text-slate-500 uppercase font-mono">Hours in {monthLabel}</span>
+          <div className="mt-3 bg-slate-50 border border-slate-200 p-1.5 text-[9px] font-mono text-slate-600 flex items-center justify-between">
+            <span className="text-slate-500">Window:</span>
+            <span className="font-bold text-[#0A2540]">{contractSignOn} → {contractSignOff}</span>
+          </div>
+        </div>
+
+        {/* Card 3: Monthly Duty Total */}
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <CalendarIcon className="w-4 h-4 text-[#00A86B]" />
+                <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
+                  Monthly Duty Total
+                </h3>
+              </div>
+
+              {/* Month Switcher */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navigateMonth(-1)}
+                  className="p-1 border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Previous Month"
+                >
+                  <ChevronLeft className="w-3 h-3 text-slate-600" />
+                </button>
+                <span className="text-[10px] font-mono font-bold text-slate-800 px-0.5 truncate max-w-[80px]">
+                  {monthLabel.split(" ")[0].slice(0, 3)} {monthLabel.split(" ")[1]}
+                </span>
+                <button
+                  onClick={() => navigateMonth(1)}
+                  className="p-1 border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Next Month"
+                >
+                  <ChevronRight className="w-3 h-3 text-slate-600" />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-[#00A86B] tabular-nums font-mono">
+                {monthlyDutyTotal.totalHours}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase font-mono">Hours in {monthLabel}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-slate-100 text-xs font-mono">
+              <div>
+                <span className="text-[9px] text-slate-400 block uppercase">Completed</span>
+                <span className="font-bold text-[#00A86B] text-xs">{monthlyDutyTotal.completedHours} hrs</span>
+                <span className="text-[8px] text-slate-400 block font-sans">({monthlyDutyTotal.completedCount} duties)</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-400 block uppercase">Scheduled</span>
+                <span className="font-bold text-slate-700 text-xs">{monthlyDutyTotal.scheduledHours} hrs</span>
+                <span className="text-[8px] text-slate-400 block font-sans">({monthlyDutyTotal.scheduledCount} upcoming)</span>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-slate-100 text-xs font-mono">
-            <div>
-              <span className="text-[10px] text-slate-400 block uppercase">Completed</span>
-              <span className="font-bold text-[#00A86B] text-sm">{monthlyDutyTotal.completedHours} hrs</span>
-              <span className="text-[9px] text-slate-400 block font-sans">({monthlyDutyTotal.completedCount} watches)</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block uppercase">Scheduled</span>
-              <span className="font-bold text-slate-700 text-sm">{monthlyDutyTotal.scheduledHours} hrs</span>
-              <span className="text-[9px] text-slate-400 block font-sans">({monthlyDutyTotal.scheduledCount} upcoming)</span>
-            </div>
-          </div>
-
-          <div className="mt-3.5 bg-emerald-50 border border-emerald-200 p-2 text-[10px] font-mono text-emerald-800 flex items-center justify-between">
+          <div className="mt-3 bg-emerald-50 border border-emerald-200 p-1.5 text-[9px] font-mono text-emerald-800 flex items-center justify-between">
             <span className="flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#00A86B]" />
-              <span>STCW Rest Hours Margin:</span>
+              <CheckCircle2 className="w-3 h-3 text-[#00A86B]" />
+              <span>STCW Rest Margin:</span>
             </span>
-            <span className="font-bold">Fully Compliant</span>
+            <span className="font-bold">Compliant (≥10h)</span>
           </div>
         </div>
 
-        {/* Card 3: Discharge & Endorsement Status */}
-        <div className="bg-white border border-slate-200 p-5 shadow-sm md:col-span-2 xl:col-span-1">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-[#0A2540]" />
-              <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
-                Official Sea Service Verification
-              </h3>
+        {/* Card 4: Discharge & Endorsement Status */}
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#0A2540]" />
+                <h3 className="text-xs font-black text-[#0A2540] uppercase tracking-wider">
+                  Sea Service Verification
+                </h3>
+              </div>
+              <span className="text-[9px] font-mono text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 border border-emerald-200">
+                Certified
+              </span>
             </div>
-          </div>
 
-          <div className="mt-3 text-xs text-slate-600 space-y-2">
-            <p>
-              Cumulative bridge watchkeeping hours certified under <strong>STCW Regulation I/11 & Section A-VIII/2</strong> for qualification advancement and seafarer discharge book verification.
-            </p>
-            <div className="p-2.5 bg-slate-50 border border-slate-200 space-y-1 text-[11px] font-mono">
+            <div className="mt-2.5 p-2 bg-slate-50 border border-slate-200 space-y-1 text-[10px] font-mono">
               <div className="flex justify-between">
                 <span className="text-slate-500">Candidate:</span>
-                <span className="font-bold text-[#0A2540]">{personalIdentity}</span>
+                <span className="font-bold text-[#0A2540] truncate max-w-[120px]">{personalIdentity.split(" - ")[1] || personalIdentity}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Deck Department:</span>
-                <span className="font-semibold text-slate-800">Bridge Watchkeeping Team</span>
+                <span className="text-slate-500">Rank:</span>
+                <span className="font-semibold text-slate-800">{personalIdentity.split(" - ")[0]}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Endorsement Status:</span>
-                <span className="font-bold text-[#00A86B]">Active Record · Certified</span>
+                <span className="text-slate-500">Regulation:</span>
+                <span className="font-bold text-[#00A86B]">STCW I/11 & VIII/2</span>
               </div>
             </div>
           </div>
 
           <button
             onClick={() => setShowPrintModal(true)}
-            className="w-full mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-[#0A2540] border border-slate-300 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="w-full mt-3 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-[#0A2540] border border-slate-300 text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
-            Print / Export Sea Service Certificate
+            Print STCW Certificate
           </button>
         </div>
       </div>

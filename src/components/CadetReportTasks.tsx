@@ -25,18 +25,22 @@ import {
   ChevronRight, 
   Paperclip, 
   Eye, 
-  Sparkles,
-  Download,
-  Info,
-  Layers,
-  Ship,
-  FileCheck
+  Download, 
+  Info, 
+  UploadCloud, 
+  AlertTriangle, 
+  FileCheck,
+  Save,
+  RotateCcw,
+  FileSpreadsheet
 } from "lucide-react";
+import { exportCadetTasksBackup } from "../utils/excelBackup";
 import { 
   CadetRotationPhase, 
   CadetTaskItem, 
   CadetTaskStatus, 
-  ROTATION_PHASES 
+  ROTATION_PHASES,
+  getDynamicPhaseDates 
 } from "../types/cadetTraining";
 import { 
   getStoredCadetTasks, 
@@ -45,7 +49,12 @@ import {
   deleteCadetTaskFromFirestore, 
   subscribeToFirestoreCadetTasks 
 } from "../utils/cadetFirestoreSync";
-import { getStoredUserProfile, UserProfile } from "../types/userProfile";
+import { 
+  getStoredUserProfile, 
+  UserProfile,
+  getRemainingContractDays,
+  calculateSignOffDate 
+} from "../types/userProfile";
 import { useFirebase } from "../context/FirebaseContext";
 
 const SAMPLE_ATTACHMENTS = [
@@ -72,7 +81,7 @@ const SAMPLE_ATTACHMENTS = [
 ];
 
 export default function CadetReportTasks() {
-  const { userProfile: fbUserProfile, isConnected } = useFirebase();
+  const { userProfile: fbUserProfile } = useFirebase();
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => getStoredUserProfile());
 
   // Listen to profile updates
@@ -103,6 +112,11 @@ export default function CadetReportTasks() {
   // Tasks State
   const [tasks, setTasks] = useState<CadetTaskItem[]>(() => getStoredCadetTasks());
 
+  // Pending Changes State for Top-Right "Apply Changes" Action
+  const [hasPendingChanges, setHasPendingChanges] = useState<boolean>(false);
+  const [isApplyingChanges, setIsApplyingChanges] = useState<boolean>(false);
+  const [pendingDeletions, setPendingDeletions] = useState<string[]>([]);
+
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | CadetTaskStatus>("ALL");
@@ -110,6 +124,10 @@ export default function CadetReportTasks() {
   // Modal State for Task Entry Form (Add/Edit)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<CadetTaskItem | null>(null);
+
+  // Modal State for Delete Confirmation Modal
+  const [taskToDelete, setTaskToDelete] = useState<CadetTaskItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Attachment Viewer Modal
   const [viewingAttachment, setViewingAttachment] = useState<{ url: string; name: string } | null>(null);
@@ -159,19 +177,21 @@ export default function CadetReportTasks() {
     };
   }, []);
 
-  // Update default calendar month when active phase changes
+  // Dynamic Contract & Phase Dates
+  const currentSignOn = currentUser.signOnDate || "2026-01-05";
+  const currentSignOff = currentUser.signOffDate || "2027-01-05";
+  const currentDurationMonths = currentUser.contractDurationMonths || 12;
+  const currentContractDays = getRemainingContractDays(currentSignOff, undefined, currentSignOn);
+  const currentPhaseDates = useMemo(
+    () => getDynamicPhaseDates(activePhase, currentSignOn, currentDurationMonths), 
+    [activePhase, currentSignOn, currentDurationMonths]
+  );
+
+  // Update calendar month dynamically when active phase or sign-on date changes
   useEffect(() => {
-    if (activePhase === "bosun_assist") {
-      setCalendarDate(new Date(2026, 4, 1)); // May 2026
-    } else if (activePhase === "third_officer_assist") {
-      setCalendarDate(new Date(2026, 6, 1)); // July 2026
-    } else if (activePhase === "second_officer_assist") {
-      setCalendarDate(new Date(2026, 7, 1)); // August 2026
-    } else {
-      setCalendarDate(new Date(2026, 9, 1)); // October 2026
-    }
+    setCalendarDate(currentPhaseDates.calendarInitialDate);
     setSelectedCalendarDateStr(null);
-  }, [activePhase]);
+  }, [currentPhaseDates]);
 
   // Filter tasks for active phase
   const phaseTasks = useMemo(() => {
@@ -224,7 +244,9 @@ export default function CadetReportTasks() {
     setFormTitle("");
     setFormDescription("");
     setFormAssistDescription("");
-    setFormDate(specificDate || new Date().toISOString().split("T")[0]);
+    // Default task date within the active rotation phase window
+    const defaultDate = specificDate || currentPhaseDates.startDateStr;
+    setFormDate(defaultDate);
     setFormStatus("Pending Review");
     setFormDocName("");
     setFormDocUrl("");
@@ -306,17 +328,18 @@ export default function CadetReportTasks() {
     let updatedTasks: CadetTaskItem[];
     if (editingTask) {
       updatedTasks = tasks.map(t => t.id === editingTask.id ? newTaskItem : t);
-      showToast("Task updated and synced to Training Record Book.");
+      showToast("Task updated locally. Click [Apply / Save Changes] to commit.");
     } else {
       updatedTasks = [newTaskItem, ...tasks];
-      showToast("New sea project task logged successfully.");
+      showToast("New sea project task added. Click [Apply / Save Changes] to commit.");
     }
 
     setTasks(updatedTasks);
     saveCadetTasksLocally(updatedTasks);
+    setHasPendingChanges(true);
     setIsModalOpen(false);
 
-    // Sync to Firestore
+    // Immediate background push to Firestore as well
     syncCadetTaskToFirestore(newTaskItem).catch(err => {
       console.warn("Firestore task sync warning:", err);
     });
@@ -339,18 +362,66 @@ export default function CadetReportTasks() {
     const updatedTasks = tasks.map(t => t.id === task.id ? updatedTask : t);
     setTasks(updatedTasks);
     saveCadetTasksLocally(updatedTasks);
+    setHasPendingChanges(true);
     syncCadetTaskToFirestore(updatedTask).catch(() => {});
     showToast(isApproved ? "Status reverted to Completed." : "Task successfully endorsed and approved by officer.");
   };
 
-  // Delete Task Handler
-  const handleDeleteTask = (taskId: string) => {
-    if (!confirm("Are you sure you want to delete this cadet training task?")) return;
-    const updated = tasks.filter(t => t.id !== taskId);
-    setTasks(updated);
-    saveCadetTasksLocally(updated);
-    deleteCadetTaskFromFirestore(taskId).catch(() => {});
-    showToast("Task record removed.");
+  // Open Delete Confirmation Modal
+  const handleOpenDeleteModal = (task: CadetTaskItem) => {
+    setTaskToDelete(task);
+  };
+
+  // Confirm Delete Task Handler
+  const handleConfirmDelete = async () => {
+    if (!taskToDelete) return;
+    setIsDeleting(true);
+
+    try {
+      const taskId = taskToDelete.id;
+      const updated = tasks.filter(t => t.id !== taskId);
+      setTasks(updated);
+      saveCadetTasksLocally(updated);
+      setPendingDeletions(prev => [...prev, taskId]);
+      setHasPendingChanges(true);
+
+      // Delete from Cloud Firestore
+      await deleteCadetTaskFromFirestore(taskId);
+
+      showToast(`Task "${taskToDelete.title.slice(0, 28)}..." deleted from Training Record Book.`);
+      setTaskToDelete(null);
+    } catch (err: any) {
+      console.error("Failed to delete task from Firestore:", err);
+      showToast("Error deleting task from Cloud Firestore.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Top-Right "Apply / Save Changes" Global Action
+  const handleApplyChanges = async () => {
+    setIsApplyingChanges(true);
+    try {
+      // 1. Process any pending deletions
+      if (pendingDeletions.length > 0) {
+        await Promise.all(pendingDeletions.map(id => deleteCadetTaskFromFirestore(id)));
+        setPendingDeletions([]);
+      }
+
+      // 2. Commit all active tasks to Cloud Firestore
+      await Promise.all(tasks.map(task => syncCadetTaskToFirestore(task)));
+
+      // 3. Save locally
+      saveCadetTasksLocally(tasks);
+
+      setHasPendingChanges(false);
+      showToast("✓ All Cadet Tasks & TRB changes successfully committed to Cloud Firestore!");
+    } catch (err: any) {
+      console.error("Apply changes error:", err);
+      showToast("Failed to commit changes to Cloud Firestore. Please retry.");
+    } finally {
+      setIsApplyingChanges(false);
+    }
   };
 
   // Handle local sample attachment selection
@@ -446,29 +517,29 @@ export default function CadetReportTasks() {
     switch (status) {
       case "Approved by Officer":
         return {
-          bg: "bg-emerald-50 text-emerald-700 border-emerald-300",
-          dot: "bg-emerald-500",
+          bg: "bg-emerald-950/80 text-emerald-300 border-emerald-500/80",
+          dot: "bg-emerald-400",
           icon: CheckCircle2,
           label: "Approved by Officer"
         };
       case "Completed":
         return {
-          bg: "bg-blue-50 text-blue-700 border-blue-300",
-          dot: "bg-blue-500",
+          bg: "bg-blue-950/80 text-blue-300 border-blue-500/80",
+          dot: "bg-blue-400",
           icon: Check,
           label: "Completed"
         };
       case "In Progress":
         return {
-          bg: "bg-amber-50 text-amber-700 border-amber-300",
-          dot: "bg-amber-500",
+          bg: "bg-amber-950/80 text-amber-300 border-amber-500/80",
+          dot: "bg-amber-400",
           icon: Clock,
           label: "In Progress"
         };
       case "Pending Review":
       default:
         return {
-          bg: "bg-slate-100 text-slate-700 border-slate-300",
+          bg: "bg-slate-800/90 text-slate-300 border-slate-600",
           dot: "bg-slate-400",
           icon: AlertCircle,
           label: "Pending Review"
@@ -479,106 +550,157 @@ export default function CadetReportTasks() {
   const currentPhaseInfo = ROTATION_PHASES[activePhase];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-slate-100 font-sans selection:bg-[#00A86B] selection:text-white">
       {/* Toast Alert */}
       <AnimatePresence>
         {toastMsg && (
           <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-5 right-5 z-50 bg-[#0A2540] border border-[#00A86B] text-white px-4 py-2.5 shadow-2xl font-mono text-xs flex items-center gap-2"
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-5 right-5 z-50 bg-[#0F172A] border-2 border-[#00A86B] text-white px-5 py-3 shadow-2xl font-mono text-xs flex items-center gap-3 backdrop-blur-md"
           >
-            <CheckCircle2 className="w-4 h-4 text-[#00A86B] shrink-0" />
-            <span>{toastMsg}</span>
+            <CheckCircle2 className="w-5 h-5 text-[#00A86B] shrink-0 animate-pulse" />
+            <span className="font-bold tracking-wide">{toastMsg}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 1. TOP HEADER & DYNAMIC RANK-BASED ACCESS BANNER */}
-      <div className="bg-white border border-slate-200 p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      {/* 1. TOP HEADER & DYNAMIC RANK-BASED ACCESS BANNER WITH TOP-RIGHT "APPLY CHANGES" */}
+      <div className="bg-[#0F172A] border border-[#334155] p-5 shadow-xl relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 relative z-10">
           <div>
-            <div className="flex items-center gap-2.5">
-              <span className="px-2 py-0.5 bg-[#0A2540] text-white text-[10px] font-mono font-bold uppercase tracking-wider">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="px-2.5 py-0.5 bg-[#1E293B] text-slate-200 text-[10px] font-mono font-bold uppercase tracking-wider border border-slate-700">
                 STCW 2010 SECTION A-II/1
               </span>
-              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold uppercase border border-emerald-300 flex items-center gap-1">
-                <FileCheck className="w-3 h-3" /> Training Record Book (TRB)
+              <span className="px-2.5 py-0.5 bg-emerald-950/80 text-emerald-300 text-[10px] font-mono font-bold uppercase border border-emerald-500/50 flex items-center gap-1.5">
+                <FileCheck className="w-3.5 h-3.5 text-emerald-400" /> Training Record Book (TRB)
               </span>
+              {hasPendingChanges && (
+                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold uppercase border border-amber-400/60 flex items-center gap-1 animate-pulse">
+                  <AlertCircle className="w-3 h-3" /> Unsaved Changes
+                </span>
+              )}
             </div>
-            <h2 className="text-lg md:text-xl font-black text-[#0A2540] uppercase tracking-wide mt-1.5 flex items-center gap-2">
+            <h2 className="text-xl md:text-2xl font-black text-white uppercase tracking-wide mt-2 flex flex-wrap items-center gap-2">
               <span>Cadet Report &amp; Task Management</span>
-              <span className="text-xs font-mono font-normal text-slate-500 lowercase">
+              <span className="text-xs font-mono font-normal text-emerald-400 lowercase">
                 (Deck Cadet Sea Project Documentation)
               </span>
             </h2>
-            <p className="text-xs text-slate-600 mt-1 max-w-3xl">
+            <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
               Official shipboard structured training matrix, sea project tasks, and continuous watchkeeping competency log endorsed by supervising shipboard officers under IMO Model Course 7.03.
             </p>
           </div>
 
-          {/* Dynamic Rank Access Card */}
-          <div className="bg-slate-50 border border-slate-200 p-3.5 flex items-center justify-between gap-4 font-mono text-xs min-w-[280px]">
-            <div className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-sm flex items-center justify-center font-bold text-white shadow-xs ${
-                isDeckCadet ? "bg-[#00A86B]" : "bg-[#0A2540]"
-              }`}>
-                {isDeckCadet ? <Award className="w-5 h-5" /> : <User className="w-5 h-5" />}
+          {/* Dynamic Rank Access Card & Top-Right Apply Changes */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            {/* Rank Status Card */}
+            <div className="bg-[#1E293B] border border-[#334155] p-3.5 flex items-center justify-between gap-4 font-mono text-xs min-w-[270px] shadow-md">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-sm flex items-center justify-center font-bold text-white shadow-md ${
+                  isDeckCadet ? "bg-[#00A86B]" : "bg-[#0284C7]"
+                }`}>
+                  {isDeckCadet ? <Award className="w-5 h-5 text-white" /> : <User className="w-5 h-5 text-white" />}
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">
+                    {isDeckCadet ? "ACTIVE CADET PROFILE" : "SUPERVISING OFFICER MODE"}
+                  </span>
+                  <span className="font-extrabold text-white text-xs block truncate max-w-[130px]">
+                    {currentUser.fullName || "Mateo Rossi"}
+                  </span>
+                  <span className="text-[10px] text-emerald-400 block">
+                    {currentUser.rank || "Deck Cadet"} · {currentUser.seafarerId || "CDC ACTIVE"}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-[9px] uppercase font-bold text-slate-400 block">
-                  {isDeckCadet ? "ACTIVE CADET PROFILE" : "SUPERVISING OFFICER MODE"}
+
+              <div className="text-right border-l border-slate-700 pl-3">
+                <span className="text-[9px] text-slate-400 uppercase block font-semibold">TRB Certified</span>
+                <span className="text-base font-black text-[#00A86B] block">
+                  {overallStats.percent}%
                 </span>
-                <span className="font-extrabold text-[#0A2540] text-xs block">
-                  {currentUser.fullName || "Mateo Rossi"}
-                </span>
-                <span className="text-[10px] text-slate-500 block">
-                  {currentUser.rank || "Deck Cadet"} · {currentUser.seafarerId || "CDC ACTIVE"}
+                <span className="text-[9px] text-slate-400">
+                  {overallStats.approved}/{overallStats.total} Tasks
                 </span>
               </div>
             </div>
 
-            <div className="text-right border-l border-slate-200 pl-3">
-              <span className="text-[9px] text-slate-400 uppercase block font-semibold">TRB Progress</span>
-              <span className="text-base font-black text-[#00A86B] block">
-                {overallStats.percent}%
-              </span>
-              <span className="text-[9px] text-slate-500">
-                {overallStats.approved}/{overallStats.total} Approved
-              </span>
-            </div>
+            {/* TOP-RIGHT PROMINENT "APPLY / SAVE CHANGES" BUTTON */}
+            <button
+              onClick={handleApplyChanges}
+              disabled={isApplyingChanges}
+              className={`px-4 py-3 font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-lg transition-all border ${
+                hasPendingChanges
+                  ? "bg-gradient-to-r from-[#00A86B] to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 text-white border-emerald-300 ring-2 ring-emerald-400/80 shadow-emerald-900/50 animate-pulse"
+                  : "bg-[#1E293B] hover:bg-slate-700 text-slate-200 border-[#334155]"
+              }`}
+              title="Commit all additions, edits, and deletions to Cloud Firestore"
+            >
+              {isApplyingChanges ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Committing...</span>
+                </>
+              ) : hasPendingChanges ? (
+                <>
+                  <UploadCloud className="w-4 h-4 text-white" />
+                  <span>Apply / Save Changes</span>
+                  <span className="w-2 h-2 rounded-full bg-white animate-ping ml-0.5" />
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4 text-[#00A86B]" />
+                  <span>All Changes Saved</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Global Progress Bar */}
-        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
+        {/* Global Progress Bar & Fast Action Row */}
+        <div className="mt-5 pt-4 border-t border-[#334155] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs font-mono">
           <div className="flex-1 max-w-xl">
-            <div className="flex items-center justify-between text-[11px] mb-1 font-bold text-slate-600">
-              <span>Overall 12-Month Cadet Onboard Training Progress</span>
-              <span className="text-[#0A2540]">{overallStats.approved} of {overallStats.total} Tasks Certified ({overallStats.totalHours} Sea Hours)</span>
+            <div className="flex items-center justify-between text-[11px] mb-1.5 font-bold">
+              <span className="text-slate-300">Overall 12-Month Cadet Sea Training Progress</span>
+              <span className="text-emerald-400 font-extrabold">{overallStats.approved} of {overallStats.total} Tasks Certified ({overallStats.totalHours} Sea Hours)</span>
             </div>
-            <div className="w-full h-2.5 bg-slate-100 border border-slate-200 overflow-hidden">
+            <div className="w-full h-3 bg-[#1E293B] border border-[#334155] overflow-hidden p-0.5">
               <div 
-                className="h-full bg-gradient-to-r from-emerald-500 to-[#0A2540] transition-all duration-500"
+                className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-[#0284C7] transition-all duration-500 shadow-sm"
                 style={{ width: `${overallStats.percent}%` }}
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <button
               onClick={() => handleOpenCreateModal()}
-              className="px-3.5 py-2 bg-[#00A86B] hover:bg-emerald-600 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-1.5 transition-colors"
+              className="px-4 py-2 bg-[#00A86B] hover:bg-emerald-600 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer shadow-md flex items-center gap-2 transition-colors border border-emerald-400/60"
             >
               <Plus className="w-4 h-4" /> Log Task
             </button>
             <button
+              onClick={() => {
+                const fname = exportCadetTasksBackup();
+                showToast(`✓ Cadet Report & Task data successfully backed up to Excel (${fname})`);
+              }}
+              className="px-4 py-2 bg-[#0F172A] hover:bg-[#1E293B] text-emerald-400 font-mono text-xs font-bold uppercase tracking-wider border border-emerald-500/60 cursor-pointer flex items-center gap-2 transition-colors"
+              title="Backup STCW TRB Task Log & Rotation Summary to Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> Backup to Excel
+            </button>
+            <button
               onClick={() => window.print()}
-              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-xs font-bold uppercase tracking-wider border border-slate-300 cursor-pointer flex items-center gap-1.5 transition-colors"
+              className="px-4 py-2 bg-[#1E293B] hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold uppercase tracking-wider border border-[#334155] cursor-pointer flex items-center gap-2 transition-colors"
               title="Print Cadet Training Record Book Report"
             >
-              <Download className="w-3.5 h-3.5" /> TRB Report
+              <Download className="w-4 h-4 text-slate-300" /> TRB Report
             </button>
           </div>
         </div>
@@ -586,9 +708,10 @@ export default function CadetReportTasks() {
 
       {/* 2. ROTATION SUB-TABS (4-PHASE ONBOARD TRAINING) */}
       <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 font-mono text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 font-mono text-xs">
           {(["bosun_assist", "third_officer_assist", "second_officer_assist", "chief_officer_assist"] as CadetRotationPhase[]).map((phaseKey) => {
             const phase = ROTATION_PHASES[phaseKey];
+            const phaseDynamic = getDynamicPhaseDates(phaseKey, currentSignOn, currentDurationMonths);
             const isActive = activePhase === phaseKey;
             const phaseCount = tasks.filter(t => t.phase === phaseKey).length;
             const approvedCount = tasks.filter(t => t.phase === phaseKey && t.status === "Approved by Officer").length;
@@ -597,29 +720,34 @@ export default function CadetReportTasks() {
               <button
                 key={phaseKey}
                 onClick={() => setActivePhase(phaseKey)}
-                className={`p-3.5 text-left border transition-all cursor-pointer relative ${
+                className={`p-3.5 text-left border transition-all cursor-pointer relative shadow-md ${
                   isActive
-                    ? "bg-[#0A2540] text-white border-[#0A2540] shadow-md ring-1 ring-[#00A86B]"
-                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                    ? "bg-[#0B1E38] text-white border-[#00A86B] ring-2 ring-[#00A86B]/60 shadow-lg"
+                    : "bg-[#1E293B] text-slate-200 border-[#334155] hover:bg-[#253347] hover:border-slate-500"
                 }`}
               >
                 {isActive && (
-                  <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-[#00A86B]" />
+                  <div className="absolute top-0 right-0 w-3 h-3 bg-[#00A86B]" />
                 )}
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.2 ${
-                    isActive ? "bg-[#00A86B] text-white" : "bg-slate-100 text-slate-600"
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 border ${
+                    isActive 
+                      ? "bg-[#00A86B] text-white border-[#00A86B]" 
+                      : "bg-[#0F172A] text-slate-300 border-slate-700"
                   }`}>
-                    {phase.period}
+                    {phaseDynamic.periodLabel || phase.period}
                   </span>
-                  <span className={`text-[10px] ${isActive ? "text-emerald-300 font-bold" : "text-slate-500"}`}>
+                  <span className={`text-[11px] font-bold ${isActive ? "text-emerald-400" : "text-slate-400"}`}>
                     {approvedCount}/{phaseCount} Certified
                   </span>
                 </div>
-                <div className="font-extrabold uppercase text-xs tracking-wide">
-                  {phase.name}
+                <div className="font-extrabold uppercase text-xs sm:text-sm tracking-wide text-white">
+                  {phase.name.split(" (")[0]}
                 </div>
-                <div className={`text-[10px] mt-1 line-clamp-1 ${isActive ? "text-slate-300" : "text-slate-500"}`}>
+                <div className={`text-[10px] mt-1 font-mono font-bold ${isActive ? "text-emerald-300" : "text-cyan-400"}`}>
+                  {phaseDynamic.dateRangeLabel}
+                </div>
+                <div className={`text-[9px] mt-1 line-clamp-1 ${isActive ? "text-emerald-200/80" : "text-slate-400"}`}>
                   Mentor: {phase.mentorTitle}
                 </div>
               </button>
@@ -628,57 +756,66 @@ export default function CadetReportTasks() {
         </div>
 
         {/* Phase Details & Milestones Header Card */}
-        <div className="bg-white border border-slate-200 p-4 shadow-xs">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+        <div className="bg-[#0F172A] border border-[#334155] p-5 shadow-lg space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#334155]">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <span className="w-2.5 h-2.5 bg-[#00A86B] rounded-full animate-pulse" />
-                <h3 className="text-sm font-black text-[#0A2540] uppercase tracking-wider font-mono">
+                <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">
                   {currentPhaseInfo.name} · Sea Training Syllabus
                 </h3>
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                <strong>Focus Area:</strong> {currentPhaseInfo.focusArea}
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-mono">
+                <span className="px-2 py-0.5 bg-emerald-950/80 text-emerald-300 border border-emerald-500/60 font-bold">
+                  Rotation Window: {currentPhaseDates.dateRangeLabel}
+                </span>
+                <span className="text-slate-400 text-[11px]">
+                  ({currentPhaseDates.periodLabel} · Contract Duration: {currentDurationMonths} Months · Sign-On: {currentSignOn})
+                </span>
+              </div>
+              <p className="text-xs text-slate-200 mt-2 leading-relaxed">
+                <strong className="text-emerald-400">Focus Area:</strong> {currentPhaseInfo.focusArea}
               </p>
-              <p className="text-[11px] font-mono text-slate-500 mt-0.5">
-                Competency Regulation: <strong>{currentPhaseInfo.stcwReference}</strong> · Supervising Officer: <strong>{currentPhaseInfo.mentorTitle}</strong>
+              <p className="text-[11px] font-mono text-slate-400 mt-1">
+                Competency Regulation: <strong className="text-cyan-300">{currentPhaseInfo.stcwReference}</strong> · Supervising Officer: <strong className="text-white">{currentPhaseInfo.mentorTitle}</strong>
               </p>
             </div>
 
-            <div className="flex items-center gap-2 font-mono text-xs">
-              <div className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-center">
+            <div className="flex items-center gap-2.5 font-mono text-xs">
+              <div className="px-3.5 py-2 bg-[#1E293B] border border-[#334155] text-center min-w-[70px]">
                 <span className="text-[9px] text-slate-400 block uppercase">Phase Tasks</span>
-                <span className="font-bold text-[#0A2540]">{phaseStats.total}</span>
+                <span className="font-extrabold text-white text-sm">{phaseStats.total}</span>
               </div>
-              <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-center">
-                <span className="text-[9px] text-emerald-600 block uppercase">Approved</span>
-                <span className="font-bold text-emerald-800">{phaseStats.approved}</span>
+              <div className="px-3.5 py-2 bg-emerald-950/70 border border-emerald-600/60 text-center min-w-[70px]">
+                <span className="text-[9px] text-emerald-400 block uppercase">Approved</span>
+                <span className="font-extrabold text-emerald-300 text-sm">{phaseStats.approved}</span>
               </div>
-              <div className="px-3 py-1.5 bg-blue-50 border border-blue-200 text-center">
-                <span className="text-[9px] text-blue-600 block uppercase">Hours Logged</span>
-                <span className="font-bold text-blue-800">{phaseStats.totalHours} hrs</span>
+              <div className="px-3.5 py-2 bg-blue-950/70 border border-blue-600/60 text-center min-w-[70px]">
+                <span className="text-[9px] text-blue-300 block uppercase">Hours Logged</span>
+                <span className="font-extrabold text-blue-200 text-sm">{phaseStats.totalHours}h</span>
               </div>
             </div>
           </div>
 
           {/* 3-Month Rotation Milestones */}
-          <div className="mt-3 pt-1">
-            <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block mb-2">
+          <div>
+            <span className="text-[11px] font-mono uppercase font-bold text-slate-300 block mb-2.5 flex items-center gap-1.5">
+              <Compass className="w-3.5 h-3.5 text-emerald-400" />
               Mandatory Phase Milestones (STCW TRB Sign-Off Targets):
             </span>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {currentPhaseInfo.milestones.map((m, idx) => (
-                <div key={idx} className="p-2.5 bg-slate-50/80 border border-slate-200 text-xs">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-mono font-bold text-[#0A2540] bg-white px-1.5 py-0.2 border border-slate-200">
+                <div key={idx} className="p-3 bg-[#1E293B] border border-[#334155] text-xs shadow-sm">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-mono font-bold text-emerald-400 bg-[#0F172A] px-2 py-0.5 border border-slate-700">
                       {m.dueMonth}
                     </span>
-                    <span className="text-[9px] font-mono text-emerald-600 font-bold uppercase">
+                    <span className="text-[9px] font-mono text-cyan-300 font-bold uppercase tracking-wider">
                       STCW Required
                     </span>
                   </div>
-                  <h4 className="font-bold text-slate-800 text-[11px] leading-snug">{m.title}</h4>
-                  <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">{m.description}</p>
+                  <h4 className="font-bold text-white text-xs leading-snug">{m.title}</h4>
+                  <p className="text-[11px] text-slate-300 mt-1.5 leading-relaxed font-sans">{m.description}</p>
                 </div>
               ))}
             </div>
@@ -687,22 +824,22 @@ export default function CadetReportTasks() {
       </div>
 
       {/* 3. TASK SEARCH, FILTERS & ACTION BAR */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono text-xs">
-        <div className="flex flex-1 items-center gap-2">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono text-xs bg-[#0F172A] p-3 border border-[#334155]">
+        <div className="flex flex-1 items-center gap-2.5">
           {/* Search Box */}
           <div className="relative flex-1 max-w-md">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search module title, task details, assist duties, officer..."
-              className="w-full bg-white border border-slate-300 pl-9 pr-3 py-1.5 text-slate-800 text-xs focus:outline-none focus:border-[#0A2540]"
+              className="w-full bg-[#1E293B] border border-[#334155] pl-9 pr-8 py-2 text-white text-xs placeholder-slate-400 focus:outline-none focus:border-emerald-400"
             />
             {searchQuery && (
               <button 
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -715,7 +852,7 @@ export default function CadetReportTasks() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="bg-white border border-slate-300 py-1.5 px-2 text-xs text-slate-800 focus:outline-none focus:border-[#0A2540] cursor-pointer"
+              className="bg-[#1E293B] border border-[#334155] py-2 px-3 text-xs text-white focus:outline-none focus:border-emerald-400 cursor-pointer"
             >
               <option value="ALL">All Statuses ({phaseTasks.length})</option>
               <option value="Approved by Officer">Approved ({phaseStats.approved})</option>
@@ -728,11 +865,11 @@ export default function CadetReportTasks() {
 
         {/* Selected Date Filter Badge */}
         {selectedCalendarDateStr && (
-          <div className="flex items-center gap-2 px-2.5 py-1 bg-amber-50 border border-amber-300 text-amber-800 text-xs">
-            <span>Filtered by Calendar Date: <strong>{selectedCalendarDateStr}</strong></span>
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-950/80 border border-cyan-500/60 text-cyan-300 text-xs">
+            <span>Filtered by Date: <strong>{selectedCalendarDateStr}</strong></span>
             <button
               onClick={() => setSelectedCalendarDateStr(null)}
-              className="text-amber-800 hover:text-amber-950 font-bold ml-1"
+              className="text-cyan-300 hover:text-white font-bold ml-1"
               title="Clear calendar date filter"
             >
               ✕
@@ -742,26 +879,26 @@ export default function CadetReportTasks() {
 
         <button
           onClick={() => handleOpenCreateModal(selectedCalendarDateStr || undefined)}
-          className="px-3.5 py-1.5 bg-[#0A2540] hover:bg-slate-800 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 transition-colors shrink-0"
+          className="px-4 py-2 bg-[#00A86B] hover:bg-emerald-600 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 transition-colors shrink-0 shadow-md border border-emerald-400/50"
         >
           <Plus className="w-3.5 h-3.5" /> Add Task Entry
         </button>
       </div>
 
-      {/* 4. TASK LOG ENTRIES LIST */}
-      <div className="space-y-3.5">
+      {/* 4. TASK LOG ENTRIES LIST (High Contrast Dark Glassmorphic Cards) */}
+      <div className="space-y-4">
         {filteredTasks.length === 0 ? (
-          <div className="bg-white border border-slate-200 p-8 text-center text-slate-500 font-mono text-xs">
-            <Info className="w-6 h-6 text-slate-400 mx-auto mb-2" />
-            <div className="font-bold text-slate-700 text-sm">No tasks found matching your filter criteria</div>
-            <p className="text-slate-500 mt-1 max-w-md mx-auto">
+          <div className="bg-[#0F172A] border border-[#334155] p-10 text-center text-slate-400 font-mono text-xs shadow-lg">
+            <Info className="w-8 h-8 text-slate-500 mx-auto mb-3" />
+            <div className="font-bold text-white text-sm">No tasks found matching your filter criteria</div>
+            <p className="text-slate-400 mt-1 max-w-md mx-auto">
               There are no tasks logged in this phase matching your active search or date selection. Log a new task to continue training documentation.
             </p>
             <button
               onClick={() => handleOpenCreateModal()}
-              className="mt-3 px-3 py-1.5 bg-[#00A86B] text-white font-bold uppercase tracking-wider inline-flex items-center gap-1.5 cursor-pointer"
+              className="mt-4 px-4 py-2 bg-[#00A86B] text-white font-bold uppercase tracking-wider inline-flex items-center gap-2 cursor-pointer shadow-md"
             >
-              <Plus className="w-3.5 h-3.5" /> Log First Task for this Rotation
+              <Plus className="w-4 h-4" /> Log First Task for this Rotation
             </button>
           </div>
         ) : (
@@ -772,88 +909,92 @@ export default function CadetReportTasks() {
             return (
               <div
                 key={task.id}
-                className="bg-white border border-slate-200 p-5 shadow-xs hover:shadow-md transition-shadow relative"
+                className="bg-[#0F172A] border border-[#334155] p-5 shadow-lg hover:border-slate-500 transition-all relative overflow-hidden"
               >
-                {/* Status Color Banner */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-100">
+                {/* Status Bar & Actions */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 mb-3.5 border-b border-[#334155]">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-mono font-bold uppercase border ${statusConfig.bg}`}>
-                      <StatusIcon className="w-3 h-3" />
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-mono font-bold uppercase border shadow-sm ${statusConfig.bg}`}>
+                      <StatusIcon className="w-3.5 h-3.5" />
                       {statusConfig.label}
                     </span>
-                    <span className="text-[10px] font-mono text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5">
+                    <span className="text-[11px] font-mono text-slate-200 bg-[#1E293B] border border-[#334155] px-2.5 py-1">
                       📅 {task.date}
                     </span>
                     {task.hoursSpent && (
-                      <span className="text-[10px] font-mono text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5">
+                      <span className="text-[11px] font-mono text-slate-200 bg-[#1E293B] border border-[#334155] px-2.5 py-1">
                         ⏱️ {task.hoursSpent} Hours
                       </span>
                     )}
                     {task.location && (
-                      <span className="text-[10px] font-mono text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5">
+                      <span className="text-[11px] font-mono text-slate-200 bg-[#1E293B] border border-[#334155] px-2.5 py-1">
                         📍 {task.location}
                       </span>
                     )}
-                    <span className="text-[10px] font-mono font-bold text-[#0A2540] bg-blue-50 border border-blue-200 px-2 py-0.5">
+                    <span className="text-[11px] font-mono font-bold text-cyan-300 bg-[#0B2545] border border-blue-800 px-2.5 py-1">
                       {task.trbReference || "STCW TRB"}
                     </span>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 font-mono text-xs">
+                  {/* Actions: Endorse, Edit, Delete */}
+                  <div className="flex items-center gap-2 font-mono text-xs">
                     <button
                       onClick={() => handleQuickApprove(task)}
-                      className={`px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider cursor-pointer border flex items-center gap-1 transition-colors ${
+                      className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider cursor-pointer border flex items-center gap-1.5 transition-all shadow-sm ${
                         task.status === "Approved by Officer"
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100"
-                          : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-[#00A86B] hover:text-white hover:border-[#00A86B]"
+                          ? "bg-emerald-950 text-emerald-300 border-emerald-500/80 hover:bg-emerald-900"
+                          : "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400"
                       }`}
                       title={task.status === "Approved by Officer" ? "Click to revoke approval" : "Approve and endorse this task as Officer"}
                     >
-                      <Check className="w-3 h-3" />
+                      <Check className="w-3.5 h-3.5" />
                       {task.status === "Approved by Officer" ? "Certified" : "Endorse & Approve"}
                     </button>
 
                     <button
                       onClick={() => handleOpenEditModal(task)}
-                      className="p-1 text-slate-500 hover:text-[#0A2540] hover:bg-slate-100 transition-colors"
+                      className="p-1.5 bg-[#1E293B] hover:bg-slate-700 text-slate-200 hover:text-white border border-[#334155] transition-colors"
                       title="Edit task log"
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <Edit3 className="w-4 h-4" />
                     </button>
+
+                    {/* FUNCTIONAL DELETE BUTTON WITH CONFIRMATION MODAL */}
                     <button
-                      onClick={() => handleDeleteTask(task.id)}
-                      className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                      title="Delete task log"
+                      onClick={() => handleOpenDeleteModal(task)}
+                      className="p-1.5 bg-red-950/40 hover:bg-red-900/80 text-red-300 hover:text-white border border-red-800/80 transition-colors cursor-pointer"
+                      title="Delete task entry"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
                 {/* Task Title */}
-                <h4 className="text-sm md:text-base font-extrabold text-[#0A2540] leading-snug">
+                <h4 className="text-base sm:text-lg font-extrabold text-white leading-snug tracking-wide">
                   {task.title}
                 </h4>
 
-                {/* Descriptions Grid: Task Performed & Assist Duties */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 mt-3 text-xs">
+                {/* Descriptions Grid: Task Performed & Assist Duties (High Contrast Containers) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3.5 text-xs">
                   {/* Task Description */}
-                  <div className="bg-slate-50/90 border border-slate-200/80 p-3">
-                    <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block mb-1">
+                  <div className="bg-[#152238] border border-[#1E3A5F] p-3.5 shadow-sm">
+                    <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block mb-1.5 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-slate-400" />
                       Shipboard Task Details Performed:
                     </span>
-                    <p className="text-slate-700 leading-relaxed font-sans">
+                    <p className="text-slate-100 leading-relaxed font-sans text-xs">
                       {task.description}
                     </p>
                   </div>
 
                   {/* Assist Description */}
-                  <div className="bg-blue-50/40 border border-blue-200/60 p-3">
-                    <span className="text-[10px] font-mono uppercase font-bold text-blue-600 block mb-1">
+                  <div className="bg-[#0C243B] border border-[#0284C7]/60 p-3.5 shadow-sm">
+                    <span className="text-[10px] font-mono uppercase font-bold text-cyan-400 block mb-1.5 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-cyan-400" />
                       Assisted Duties under Officer / Mentor Supervision:
                     </span>
-                    <p className="text-slate-800 leading-relaxed font-sans">
+                    <p className="text-white leading-relaxed font-sans text-xs">
                       {task.assistDescription}
                     </p>
                   </div>
@@ -861,24 +1002,24 @@ export default function CadetReportTasks() {
 
                 {/* Attachment & Documentation Container */}
                 {task.documentationUrl && (
-                  <div className="mt-3 p-2.5 bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="mt-3.5 p-3 bg-[#1E293B] border border-[#334155] flex items-center justify-between gap-3 shadow-inner">
+                    <div className="flex items-center gap-3 min-w-0">
                       {task.documentationType === "document" || task.documentationType === "checklist" ? (
-                        <div className="w-8 h-8 bg-blue-100 border border-blue-300 text-blue-700 flex items-center justify-center shrink-0">
-                          <FileText className="w-4 h-4" />
+                        <div className="w-10 h-10 bg-blue-900/60 border border-blue-500/60 text-blue-300 flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5" />
                         </div>
                       ) : (
                         <img 
                           src={task.documentationUrl} 
                           alt="Evidence Attachment" 
-                          className="w-10 h-10 object-cover border border-slate-300 shrink-0" 
+                          className="w-12 h-12 object-cover border border-slate-600 shrink-0" 
                         />
                       )}
                       <div className="min-w-0">
                         <span className="text-[9px] font-mono uppercase font-bold text-slate-400 block">
                           Documentation Evidence Uploaded
                         </span>
-                        <span className="text-xs font-mono font-bold text-[#0A2540] truncate block">
+                        <span className="text-xs font-mono font-bold text-white truncate block">
                           {task.documentationName || "Training_Evidence_Attachment.jpg"}
                         </span>
                       </div>
@@ -886,28 +1027,28 @@ export default function CadetReportTasks() {
 
                     <button
                       onClick={() => setViewingAttachment({ url: task.documentationUrl!, name: task.documentationName || "Attachment" })}
-                      className="px-2.5 py-1 bg-white hover:bg-slate-100 text-[#0A2540] border border-slate-300 font-mono text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                      className="px-3 py-1.5 bg-[#0F172A] hover:bg-slate-900 text-white border border-slate-600 font-mono text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                     >
-                      <Eye className="w-3 h-3" /> View Evidence
+                      <Eye className="w-3.5 h-3.5 text-emerald-400" /> View Evidence
                     </button>
                   </div>
                 )}
 
                 {/* Officer Endorsement Stamp Ribbon */}
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] font-mono text-slate-500">
-                  <div className="flex items-center gap-2">
+                <div className="mt-3.5 pt-3 border-t border-[#334155] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] font-mono">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-slate-400">Mentor:</span>
-                    <span className="font-bold text-[#0A2540]">{task.officerMentor || currentPhaseInfo.mentorTitle}</span>
+                    <span className="font-bold text-emerald-400">{task.officerMentor || currentPhaseInfo.mentorTitle}</span>
                     {task.officerRemarks && (
-                      <span className="text-slate-600 italic border-l border-slate-200 pl-2">
+                      <span className="text-slate-200 italic border-l border-slate-700 pl-2">
                         &ldquo;{task.officerRemarks}&rdquo;
                       </span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 text-slate-400">
-                    <span>Cadet: <strong>{task.cadetName}</strong></span>
+                    <span>Cadet: <strong className="text-white">{task.cadetName}</strong></span>
                     <span>·</span>
-                    <span>{task.cadetId}</span>
+                    <span className="text-slate-300">{task.cadetId}</span>
                   </div>
                 </div>
               </div>
@@ -916,55 +1057,84 @@ export default function CadetReportTasks() {
         )}
       </div>
 
-      {/* 5. INTEGRATED PHASE CALENDAR (Directly below task log list) */}
-      <div className="bg-white border border-slate-200 p-5 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+      {/* 5. INTEGRATED PHASE CALENDAR (High Contrast Container Directly below task log list) */}
+      <div className="bg-[#0F172A] border border-[#334155] p-5 shadow-xl space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-[#334155]">
           <div>
-            <div className="flex items-center gap-2 font-mono text-xs">
-              <CalendarIcon className="w-4 h-4 text-[#0A2540]" />
-              <h3 className="text-sm font-black text-[#0A2540] uppercase tracking-wider">
+            <div className="flex flex-wrap items-center gap-2.5 font-mono text-xs">
+              <CalendarIcon className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-black text-white uppercase tracking-wider">
                 Integrated Phase Calendar View
               </h3>
+              <span className="text-[10px] px-2 py-0.5 bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 font-mono font-bold">
+                {currentPhaseDates.dateRangeLabel}
+              </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Scheduled tasks, daily seamanship duties, and certified milestones for <strong>{currentPhaseInfo.name}</strong>.
+            <p className="text-xs text-slate-300 mt-1">
+              Scheduled tasks, daily seamanship duties, and certified milestones for <strong className="text-white">{currentPhaseInfo.name}</strong>.
             </p>
           </div>
 
-          {/* Month Navigation Controls */}
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <button
-              onClick={() => {
-                const prev = new Date(calendarDate);
-                prev.setMonth(prev.getMonth() - 1);
-                setCalendarDate(prev);
-              }}
-              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 cursor-pointer transition-colors"
-              title="Previous Month"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="px-3 py-1 font-bold text-[#0A2540] bg-slate-50 border border-slate-200 text-xs min-w-[130px] text-center">
-              {currentMonthName}
-            </span>
-            <button
-              onClick={() => {
-                const next = new Date(calendarDate);
-                next.setMonth(next.getMonth() + 1);
-                setCalendarDate(next);
-              }}
-              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 cursor-pointer transition-colors"
-              title="Next Month"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+          {/* Month Navigation & Rotation Month Quick-Pills */}
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+            {/* 3-Month Rotation Quick Jump Pills */}
+            <div className="flex items-center gap-1 bg-[#1E293B] p-1 border border-[#334155]">
+              {currentPhaseDates.phaseMonths.map((pm, i) => {
+                const isSelectedMonth = calendarDate.getFullYear() === pm.date.getFullYear() && calendarDate.getMonth() === pm.date.getMonth();
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setCalendarDate(new Date(pm.date));
+                      setSelectedCalendarDateStr(null);
+                    }}
+                    className={`px-2 py-1 text-[10px] font-mono font-bold uppercase transition-all cursor-pointer ${
+                      isSelectedMonth
+                        ? "bg-[#00A86B] text-white shadow-xs"
+                        : "text-slate-300 hover:text-white hover:bg-slate-700"
+                    }`}
+                    title={`Jump to Month ${i + 1} (${pm.label})`}
+                  >
+                    M{i + 1}: {pm.label.split(" ")[0]}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  const prev = new Date(calendarDate);
+                  prev.setMonth(prev.getMonth() - 1);
+                  setCalendarDate(prev);
+                }}
+                className="p-2 bg-[#1E293B] hover:bg-slate-700 text-white border border-[#334155] cursor-pointer transition-colors"
+                title="Previous Month"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-3.5 py-1.5 font-bold text-white bg-[#1E293B] border border-[#334155] text-xs min-w-[130px] text-center shadow-inner">
+                {currentMonthName}
+              </span>
+              <button
+                onClick={() => {
+                  const next = new Date(calendarDate);
+                  next.setMonth(next.getMonth() + 1);
+                  setCalendarDate(next);
+                }}
+                className="p-2 bg-[#1E293B] hover:bg-slate-700 text-white border border-[#334155] cursor-pointer transition-colors"
+                title="Next Month"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Calendar Grid */}
         <div>
           {/* Weekday headers */}
-          <div className="grid grid-cols-7 gap-1 text-center font-mono text-[10px] font-bold uppercase text-slate-500 pb-1 mb-1 border-b border-slate-100">
+          <div className="grid grid-cols-7 gap-1.5 text-center font-mono text-[11px] font-extrabold uppercase text-slate-300 pb-2 mb-1 border-b border-[#334155]">
             <div>Mon</div>
             <div>Tue</div>
             <div>Wed</div>
@@ -975,7 +1145,7 @@ export default function CadetReportTasks() {
           </div>
 
           {/* Calendar day cells */}
-          <div className="grid grid-cols-7 gap-1 font-mono text-xs">
+          <div className="grid grid-cols-7 gap-1.5 font-mono text-xs">
             {calendarDays.map((day, idx) => {
               const dayTasks = tasksByDateMap[day.dateStr] || [];
               const isSelected = selectedCalendarDateStr === day.dateStr;
@@ -992,41 +1162,41 @@ export default function CadetReportTasks() {
                       setSelectedCalendarDateStr(day.dateStr);
                     }
                   }}
-                  className={`min-h-[74px] p-1.5 border transition-all cursor-pointer flex flex-col justify-between relative ${
+                  className={`min-h-[82px] p-2 border transition-all cursor-pointer flex flex-col justify-between relative shadow-sm ${
                     isSelected
-                      ? "bg-blue-50 border-blue-500 ring-2 ring-blue-300 z-10"
+                      ? "bg-[#0B2545] border-cyan-400 ring-2 ring-cyan-400/60 z-10"
                       : day.isCurrentMonth
-                      ? "bg-white border-slate-200 hover:bg-slate-50"
-                      : "bg-slate-50/60 border-slate-100 text-slate-300"
+                      ? "bg-[#1E293B] border-[#334155] hover:bg-[#283548] text-slate-100"
+                      : "bg-[#0B1220]/70 border-slate-900/60 text-slate-500"
                   }`}
                 >
                   {/* Day Number & Today indicator */}
                   <div className="flex items-center justify-between">
-                    <span className={`text-[10px] font-bold ${
+                    <span className={`text-[11px] font-bold ${
                       isToday
-                        ? "w-4 h-4 bg-[#0A2540] text-white rounded-full flex items-center justify-center text-[9px]"
-                        : day.isCurrentMonth ? "text-slate-800" : "text-slate-400"
+                        ? "w-5 h-5 bg-[#00A86B] text-white rounded-full flex items-center justify-center text-[10px] font-black"
+                        : day.isCurrentMonth ? "text-white" : "text-slate-500"
                     }`}>
                       {day.dayNumber}
                     </span>
                     {hasTasks && (
-                      <span className="text-[9px] px-1 py-0.2 bg-[#0A2540] text-white font-bold rounded-xs">
+                      <span className="text-[10px] px-1.5 py-0.2 bg-[#0284C7] text-white font-extrabold rounded-xs">
                         {dayTasks.length}
                       </span>
                     )}
                   </div>
 
                   {/* Task Chips inside calendar day */}
-                  <div className="space-y-0.5 mt-1 overflow-hidden">
+                  <div className="space-y-1 mt-1 overflow-hidden">
                     {dayTasks.slice(0, 2).map((t) => {
                       const isApproved = t.status === "Approved by Officer";
                       return (
                         <div
                           key={t.id}
-                          className={`text-[8px] truncate px-1 py-0.2 rounded-xs border font-medium ${
+                          className={`text-[9px] truncate px-1.5 py-0.5 rounded-xs border font-medium ${
                             isApproved
-                              ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                              : "bg-blue-50 text-blue-800 border-blue-200"
+                              ? "bg-emerald-950/90 text-emerald-300 border-emerald-500/70"
+                              : "bg-blue-950/90 text-blue-300 border-blue-500/70"
                           }`}
                           title={`${t.title} (${t.status})`}
                         >
@@ -1035,7 +1205,7 @@ export default function CadetReportTasks() {
                       );
                     })}
                     {dayTasks.length > 2 && (
-                      <span className="text-[8px] text-slate-500 block">
+                      <span className="text-[9px] text-slate-400 font-bold block">
                         +{dayTasks.length - 2} more
                       </span>
                     )}
@@ -1047,16 +1217,16 @@ export default function CadetReportTasks() {
         </div>
 
         {/* Calendar Footer Info & Date Filter Reset */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-[11px] font-mono text-slate-500 border-t border-slate-100">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 text-[11px] font-mono text-slate-300 border-t border-[#334155]">
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 bg-emerald-500 inline-block" /> Approved Task
+              <span className="w-2.5 h-2.5 bg-emerald-400 inline-block" /> Approved Task
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 bg-blue-500 inline-block" /> Completed / In Progress
+              <span className="w-2.5 h-2.5 bg-blue-400 inline-block" /> Completed / In Progress
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 bg-[#0A2540] inline-block" /> Today
+              <span className="w-2.5 h-2.5 bg-[#00A86B] inline-block" /> Today
             </span>
           </div>
 
@@ -1064,7 +1234,7 @@ export default function CadetReportTasks() {
             {selectedCalendarDateStr ? (
               <button
                 onClick={() => setSelectedCalendarDateStr(null)}
-                className="text-xs text-blue-600 hover:underline font-bold"
+                className="text-xs text-cyan-300 hover:text-white font-bold underline cursor-pointer"
               >
                 Clear Date Filter ({selectedCalendarDateStr})
               </button>
@@ -1077,28 +1247,28 @@ export default function CadetReportTasks() {
         </div>
       </div>
 
-      {/* 6. TASK ENTRY FORM MODAL (Add / Edit Task) */}
+      {/* 6. TASK ENTRY FORM MODAL (Add / Edit Task - Dark Glassmorphic Surface) */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white border border-slate-300 shadow-2xl w-full max-w-2xl my-8 relative overflow-hidden"
+              className="bg-[#0F172A] border border-[#334155] shadow-2xl w-full max-w-2xl my-8 relative overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="bg-[#0A2540] text-white p-4 flex items-center justify-between">
+              <div className="bg-[#1E293B] text-white p-4 flex items-center justify-between border-b border-[#334155]">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 bg-[#00A86B] flex items-center justify-center font-bold text-white text-xs">
-                    <FileText className="w-4 h-4" />
+                  <div className="w-8 h-8 bg-[#00A86B] flex items-center justify-center font-bold text-white text-xs shadow-md">
+                    <FileText className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black uppercase tracking-wider font-mono">
+                    <h3 className="text-sm font-black uppercase tracking-wider font-mono text-white">
                       {editingTask ? "Edit Sea Project Task Log" : "Log Sea Project Task & TRB Module"}
                     </h3>
-                    <p className="text-[10px] text-slate-300 font-mono">
+                    <p className="text-[10px] text-emerald-400 font-mono">
                       {currentPhaseInfo.name} · STCW Competency Record
                     </p>
                   </div>
@@ -1106,7 +1276,7 @@ export default function CadetReportTasks() {
 
                 <button
                   onClick={() => setIsModalOpen(false)}
-                  className="text-slate-300 hover:text-white p-1"
+                  className="text-slate-400 hover:text-white p-1 cursor-pointer transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1115,15 +1285,15 @@ export default function CadetReportTasks() {
               {/* Form Content */}
               <form onSubmit={handleSaveTask} className="p-6 space-y-4 text-xs font-mono max-h-[75vh] overflow-y-auto">
                 {formError && (
-                  <div className="p-3 bg-red-50 border border-red-300 text-red-700 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                  <div className="p-3 bg-red-950/80 border border-red-500/80 text-red-200 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                     <span>{formError}</span>
                   </div>
                 )}
 
                 {/* Task Title */}
                 <div>
-                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">
+                  <label className="block text-[11px] font-bold uppercase text-slate-200 mb-1.5">
                     Task Title / Module Name *
                   </label>
                   <input
@@ -1132,13 +1302,13 @@ export default function CadetReportTasks() {
                     value={formTitle}
                     onChange={(e) => setFormTitle(e.target.value)}
                     placeholder="e.g. Lifeboat Engine Forward/Reverse Run & Sprinkler Test"
-                    className="w-full bg-slate-50 border border-slate-300 p-2 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                    className="w-full bg-[#1E293B] border border-[#334155] p-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 shadow-inner"
                   />
                 </div>
 
                 {/* Task Description */}
                 <div>
-                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">
+                  <label className="block text-[11px] font-bold uppercase text-slate-200 mb-1.5">
                     Task Description (Detailed Entry of Shipboard Tasks Performed) *
                   </label>
                   <textarea
@@ -1147,13 +1317,13 @@ export default function CadetReportTasks() {
                     value={formDescription}
                     onChange={(e) => setFormDescription(e.target.value)}
                     placeholder="Describe step-by-step what tasks and operations were completed aboard the vessel..."
-                    className="w-full bg-slate-50 border border-slate-300 p-2 text-slate-900 focus:outline-none focus:border-[#0A2540] font-sans"
+                    className="w-full bg-[#1E293B] border border-[#334155] p-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 font-sans shadow-inner text-xs"
                   />
                 </div>
 
                 {/* Assist Description */}
                 <div>
-                  <label className="block text-[11px] font-bold uppercase text-blue-700 mb-1">
+                  <label className="block text-[11px] font-bold uppercase text-cyan-400 mb-1.5">
                     Assist Description (Specific Duties Assisted with Under Supervision) *
                   </label>
                   <textarea
@@ -1162,33 +1332,36 @@ export default function CadetReportTasks() {
                     value={formAssistDescription}
                     onChange={(e) => setFormAssistDescription(e.target.value)}
                     placeholder="Specify the exact duties and steps you carried out assisting the officer or bosun..."
-                    className="w-full bg-blue-50/40 border border-blue-300 p-2 text-slate-900 focus:outline-none focus:border-[#0A2540] font-sans"
+                    className="w-full bg-[#0C243B] border border-[#0284C7]/60 p-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-sans shadow-inner text-xs"
                   />
                 </div>
 
                 {/* Grid: Date, Status, Hours, Location */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                      Task Date *
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Task Date *</span>
+                      <span className="text-[9px] text-emerald-400 font-normal">phase window</span>
                     </label>
                     <input
                       type="date"
                       required
+                      min={currentPhaseDates.startDateStr}
+                      max={currentPhaseDates.endDateStr}
                       value={formDate}
                       onChange={(e) => setFormDate(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400 font-mono text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                       Status *
                     </label>
                     <select
                       value={formStatus}
                       onChange={(e) => setFormStatus(e.target.value as CadetTaskStatus)}
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540] cursor-pointer"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400 cursor-pointer"
                     >
                       <option value="Pending Review">Pending Review</option>
                       <option value="In Progress">In Progress</option>
@@ -1198,7 +1371,7 @@ export default function CadetReportTasks() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                       Sea Hours Spent
                     </label>
                     <input
@@ -1208,12 +1381,12 @@ export default function CadetReportTasks() {
                       max="24"
                       value={formHours}
                       onChange={(e) => setFormHours(parseFloat(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                       Ship Location
                     </label>
                     <input
@@ -1221,23 +1394,23 @@ export default function CadetReportTasks() {
                       value={formLocation}
                       onChange={(e) => setFormLocation(e.target.value)}
                       placeholder="e.g. Forecastle, Bridge"
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400"
                     />
                   </div>
                 </div>
 
                 {/* Documentation Attachment Container */}
-                <div className="border border-dashed border-slate-300 p-3 bg-slate-50/60 space-y-2">
+                <div className="border border-dashed border-[#334155] p-3.5 bg-[#152238] space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="block text-[11px] font-bold uppercase text-slate-700 flex items-center gap-1.5">
-                      <Camera className="w-3.5 h-3.5 text-[#0A2540]" />
+                    <label className="block text-[11px] font-bold uppercase text-slate-200 flex items-center gap-1.5">
+                      <Camera className="w-3.5 h-3.5 text-emerald-400" />
                       Documentation Upload (Photo Evidence / Deck Log Scans / Checklists)
                     </label>
                     {formDocUrl && (
                       <button
                         type="button"
                         onClick={() => { setFormDocUrl(""); setFormDocName(""); }}
-                        className="text-[10px] text-red-600 hover:underline"
+                        className="text-[10px] text-red-400 hover:underline cursor-pointer"
                       >
                         Remove Attachment
                       </button>
@@ -1245,13 +1418,13 @@ export default function CadetReportTasks() {
                   </div>
 
                   {formDocUrl ? (
-                    <div className="flex items-center gap-3 p-2 bg-white border border-slate-200">
-                      <img src={formDocUrl} alt="Preview" className="w-12 h-12 object-cover border border-slate-200" />
+                    <div className="flex items-center gap-3 p-2 bg-[#1E293B] border border-[#334155]">
+                      <img src={formDocUrl} alt="Preview" className="w-12 h-12 object-cover border border-slate-700" />
                       <div className="min-w-0 flex-1">
-                        <span className="text-[10px] font-bold text-[#0A2540] block truncate">
+                        <span className="text-[11px] font-bold text-white block truncate">
                           {formDocName || "Attachment_Evidence.jpg"}
                         </span>
-                        <span className="text-[9px] text-emerald-600 block">
+                        <span className="text-[10px] text-emerald-400 block font-semibold">
                           Ready for submission
                         </span>
                       </div>
@@ -1259,16 +1432,16 @@ export default function CadetReportTasks() {
                   ) : (
                     <div>
                       <div className="flex flex-col sm:flex-row items-center gap-2">
-                        <label className="flex-1 w-full py-2 bg-white border border-slate-300 text-slate-700 text-center font-bold text-xs uppercase cursor-pointer hover:bg-slate-100 flex items-center justify-center gap-2">
-                          <Upload className="w-3.5 h-3.5 text-slate-500" />
+                        <label className="flex-1 w-full py-2.5 bg-[#1E293B] border border-[#334155] text-slate-200 text-center font-bold text-xs uppercase cursor-pointer hover:bg-slate-700 flex items-center justify-center gap-2 transition-colors">
+                          <Upload className="w-4 h-4 text-emerald-400" />
                           <span>Choose Photo / PDF File</span>
                           <input type="file" accept="image/*,.pdf" onChange={handleFileUpload} className="hidden" />
                         </label>
                       </div>
 
                       {/* Quick Sample Maritime Evidence buttons */}
-                      <div className="mt-2 pt-2 border-t border-slate-200/80">
-                        <span className="text-[9px] text-slate-400 block mb-1">
+                      <div className="mt-2.5 pt-2 border-t border-[#334155]">
+                        <span className="text-[10px] text-slate-400 block mb-1">
                           Or select standard maritime sample evidence:
                         </span>
                         <div className="flex flex-wrap gap-1.5">
@@ -1277,7 +1450,7 @@ export default function CadetReportTasks() {
                               key={i}
                               type="button"
                               onClick={() => handleSelectSampleAttachment(att)}
-                              className="px-2 py-0.5 bg-white border border-slate-300 text-slate-600 text-[9px] hover:border-[#0A2540] hover:text-[#0A2540] transition-colors cursor-pointer"
+                              className="px-2.5 py-1 bg-[#1E293B] border border-[#334155] text-slate-300 text-[10px] hover:border-emerald-400 hover:text-white transition-colors cursor-pointer"
                             >
                               + {att.name.slice(0, 22)}...
                             </button>
@@ -1291,7 +1464,7 @@ export default function CadetReportTasks() {
                 {/* Officer Mentor & Remarks */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                       Supervising Officer / Mentor Name
                     </label>
                     <input
@@ -1299,12 +1472,12 @@ export default function CadetReportTasks() {
                       value={formOfficerMentor}
                       onChange={(e) => setFormOfficerMentor(e.target.value)}
                       placeholder={currentPhaseInfo.mentorTitle}
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                       STCW Competency Reference
                     </label>
                     <input
@@ -1312,14 +1485,14 @@ export default function CadetReportTasks() {
                       value={formTrbRef}
                       onChange={(e) => setFormTrbRef(e.target.value)}
                       placeholder="e.g. STCW II/1 Task 1.1"
-                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                      className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400"
                     />
                   </div>
                 </div>
 
                 {/* Officer Remarks */}
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                  <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
                     Officer Endorsement Remarks (Optional)
                   </label>
                   <input
@@ -1327,22 +1500,22 @@ export default function CadetReportTasks() {
                     value={formOfficerRemarks}
                     onChange={(e) => setFormOfficerRemarks(e.target.value)}
                     placeholder="e.g. Demonstrated satisfactory compliance with safety protocols."
-                    className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-900 focus:outline-none focus:border-[#0A2540]"
+                    className="w-full bg-[#1E293B] border border-[#334155] p-2 text-white focus:outline-none focus:border-emerald-400"
                   />
                 </div>
 
                 {/* Form Buttons */}
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-[#334155]">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase cursor-pointer"
+                    className="px-4 py-2 bg-[#1E293B] hover:bg-slate-700 text-slate-300 font-bold uppercase cursor-pointer border border-[#334155]"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-[#00A86B] hover:bg-emerald-600 text-white font-bold uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-1.5"
+                    className="px-5 py-2 bg-[#00A86B] hover:bg-emerald-600 text-white font-bold uppercase tracking-wider cursor-pointer shadow-lg flex items-center gap-2 border border-emerald-400/50"
                   >
                     <Check className="w-4 h-4" />
                     {editingTask ? "Save Task Changes" : "Submit Sea Project Log"}
@@ -1354,41 +1527,136 @@ export default function CadetReportTasks() {
         )}
       </AnimatePresence>
 
-      {/* 7. EVIDENCE ATTACHMENT VIEWER MODAL */}
+      {/* 7. DELETE CONFIRMATION MODAL (Dedicated React Popup Modal) */}
       <AnimatePresence>
-        {viewingAttachment && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm">
+        {taskToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white border border-slate-300 shadow-2xl max-w-3xl w-full relative overflow-hidden"
+              className="bg-[#0F172A] border-2 border-red-600/80 shadow-2xl max-w-md w-full relative overflow-hidden font-mono"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#0A2540] text-white p-3.5 flex items-center justify-between font-mono text-xs">
-                <div className="flex items-center gap-2">
-                  <Paperclip className="w-4 h-4 text-[#00A86B]" />
-                  <span className="font-bold truncate max-w-lg">{viewingAttachment.name}</span>
+              {/* Header */}
+              <div className="bg-red-950/90 text-white p-4 flex items-center justify-between border-b border-red-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 bg-red-600 flex items-center justify-center text-white shadow-md">
+                    <AlertTriangle className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                      Delete Task Entry?
+                    </h3>
+                    <p className="text-[10px] text-red-300">
+                      Training Record Book Removal
+                    </p>
+                  </div>
                 </div>
                 <button
-                  onClick={() => setViewingAttachment(null)}
-                  className="text-slate-300 hover:text-white p-1"
+                  onClick={() => setTaskToDelete(null)}
+                  className="text-red-300 hover:text-white p-1 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-4 bg-slate-100 flex items-center justify-center max-h-[70vh] overflow-auto">
+
+              {/* Body */}
+              <div className="p-5 space-y-3.5 text-xs text-slate-200">
+                <p className="text-slate-300 leading-relaxed font-sans">
+                  Are you sure you want to permanently remove this cadet sea project record? This will delete the entry from both state and Cloud Firestore (<code className="text-red-400 font-mono">cadet_tasks</code> collection).
+                </p>
+
+                {/* Target Task Summary Card */}
+                <div className="p-3 bg-[#1E293B] border border-slate-700 space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Task to be deleted:
+                  </span>
+                  <div className="font-extrabold text-white text-xs">
+                    {taskToDelete.title}
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center gap-2 pt-1">
+                    <span>📅 {taskToDelete.date}</span>
+                    <span>·</span>
+                    <span className="text-emerald-400">{taskToDelete.status}</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-red-950/40 border border-red-900/60 text-red-300 text-[11px] flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>This action is permanent and cannot be undone.</span>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="p-4 bg-[#151F32] border-t border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTaskToDelete(null)}
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-[#1E293B] hover:bg-slate-700 text-slate-300 font-bold uppercase text-xs cursor-pointer border border-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-wider text-xs cursor-pointer shadow-lg flex items-center gap-1.5 transition-colors border border-red-500"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      <span>Confirm Delete</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 8. EVIDENCE ATTACHMENT VIEWER MODAL */}
+      <AnimatePresence>
+        {viewingAttachment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#0F172A] border border-[#334155] shadow-2xl max-w-3xl w-full relative overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#1E293B] text-white p-3.5 flex items-center justify-between font-mono text-xs border-b border-[#334155]">
+                <div className="flex items-center gap-2">
+                  <Paperclip className="w-4 h-4 text-emerald-400" />
+                  <span className="font-bold truncate max-w-lg">{viewingAttachment.name}</span>
+                </div>
+                <button
+                  onClick={() => setViewingAttachment(null)}
+                  className="text-slate-400 hover:text-white p-1 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-5 bg-[#070D18] flex items-center justify-center max-h-[70vh] overflow-auto">
                 <img
                   src={viewingAttachment.url}
                   alt={viewingAttachment.name}
-                  className="max-w-full max-h-[60vh] object-contain border border-slate-300 shadow-sm"
+                  className="max-w-full max-h-[60vh] object-contain border border-[#334155] shadow-lg"
                 />
               </div>
-              <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between font-mono text-xs text-slate-500">
+              <div className="p-3.5 bg-[#1E293B] border-t border-[#334155] flex items-center justify-between font-mono text-xs text-slate-300">
                 <span>STCW 2010 Cadet Training Photo Evidence</span>
                 <button
                   onClick={() => setViewingAttachment(null)}
-                  className="px-3 py-1 bg-[#0A2540] text-white font-bold uppercase"
+                  className="px-4 py-1.5 bg-[#0A2540] hover:bg-slate-700 text-white font-bold uppercase cursor-pointer border border-[#334155]"
                 >
                   Close
                 </button>

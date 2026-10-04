@@ -8,7 +8,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Mooring Winches & Line Handling at Port Departure",
     description: "Participated in forward mooring station operations during unmooring from Berth No. 4. Monitored spring line and head line slack, observed snap-back danger corridors, and assisted with dogging winch brakes.",
     assistDescription: "Assisted Bosun in flaking out 64mm polypropylene mooring hawsers on the forecastle, operating hydraulic fairlead rollers, and securing heaving lines in rope racks.",
-    date: "2026-05-12",
+    date: "2026-01-18",
     status: "Approved by Officer",
     documentationName: "Mooring_Station_Forward_Inspection.jpg",
     documentationType: "image",
@@ -21,8 +21,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 4,
     location: "Forecastle Mooring Deck",
-    createdAt: "2026-05-12T08:30:00Z",
-    updatedAt: "2026-05-12T14:15:00Z"
+    createdAt: "2026-01-18T08:30:00Z",
+    updatedAt: "2026-01-18T14:15:00Z"
   },
   {
     id: "cadet-task-p1-002",
@@ -30,7 +30,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Main Deck Hatch Coaming Preservation & Painting",
     description: "Executed mechanical rust descaling using pneumatic needlegun on Cargo Hold No. 3 hatch coaming corners. Degreased exposed metal with solvent and applied zinc-rich primer followed by marine polyurethane topcoat.",
     assistDescription: "Assisted Able Seafarer and Bosun with air compressor line rigging, moisture trap draining, and chemical safety data sheet (MSDS) paint ratio mixing.",
-    date: "2026-05-20",
+    date: "2026-02-12",
     status: "Approved by Officer",
     documentationName: "Coaming_Coating_DFT_Test.pdf",
     documentationType: "document",
@@ -43,8 +43,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 5,
     location: "Main Deck Hatch No. 3",
-    createdAt: "2026-05-20T09:00:00Z",
-    updatedAt: "2026-05-20T16:00:00Z"
+    createdAt: "2026-02-12T09:00:00Z",
+    updatedAt: "2026-02-12T16:00:00Z"
   },
   {
     id: "cadet-task-p1-003",
@@ -52,7 +52,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Windlass Brake Lining Inspection & Anchor Wash Testing",
     description: "Inspected port and starboard anchor windlass friction band linings for wear. Tested sea chest pressurized anchor wash nozzles and inspected chain locker bitter end release pins.",
     assistDescription: "Assisted Bosun in applying heavy open gear lithium grease to windlass reduction gears and greasing universal grease nipples with manual lever grease gun.",
-    date: "2026-06-04",
+    date: "2026-03-05",
     status: "Completed",
     documentationName: "Windlass_Grease_Lining_Check.jpg",
     documentationType: "image",
@@ -65,8 +65,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 3.5,
     location: "Forward Windlass Platform",
-    createdAt: "2026-06-04T10:15:00Z",
-    updatedAt: "2026-06-04T15:30:00Z"
+    createdAt: "2026-03-05T10:15:00Z",
+    updatedAt: "2026-03-05T15:30:00Z"
   },
 
   // --- PHASE 2: 3RD OFFICER ASSIST (Months 4–6) ---
@@ -76,7 +76,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Weekly Lifeboat Engine Run & Hydrostatic Release Inspection",
     description: "Conducted weekly SOLAS inspection of Port & Starboard totally enclosed motor lifeboats. Verified lifeboat engine forward/reverse gearbox engagement, rudder quadrant freedom, and emergency sprinkler pump operation.",
     assistDescription: "Assisted 3rd Officer with checking hydrostatic release units (HRU) on Hammar liferaft racks, inspecting hydrostatic expiration stamps, and recording lifeboat compass deviation.",
-    date: "2026-07-08",
+    date: "2026-04-16",
     status: "Approved by Officer",
     documentationName: "LSA_Weekly_Checklist_Signed.pdf",
     documentationType: "checklist",
@@ -89,8 +89,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 4,
     location: "Boat Deck Port & Stbd",
-    createdAt: "2026-07-08T09:30:00Z",
-    updatedAt: "2026-07-08T14:45:00Z"
+    createdAt: "2026-04-16T09:30:00Z",
+    updatedAt: "2026-04-16T14:45:00Z"
   },
   {
     id: "cadet-task-p2-002",
@@ -98,7 +98,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "FFA Portable Fire Extinguishers & SCBA Set Monthly Audit",
     description: "Inspected 38 portable fire extinguishers across Accommodation, Bridge, and Galley. Verified pressure gauges in green zone, checked inspection tags, weighed CO2 cartridges, and inverted foam/dry powder cylinders.",
     assistDescription: "Assisted 3rd Officer in testing Dräger SCBA breathing apparatus sets: face mask low-pressure leak test, audible whistle alarm warning at 55 bar, and cylinder hydrostatic test dates.",
-    date: "2026-07-22",
+    date: "2026-05-20",
     status: "Completed",
     documentationName: "FFA_Audit_Accommodation_Deck.jpg",
     documentationType: "image",
@@ -111,8 +111,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 4.5,
     location: "Accommodation Decks A-D & Bridge",
-    createdAt: "2026-07-22T08:00:00Z",
-    updatedAt: "2026-07-22T13:30:00Z"
+    createdAt: "2026-05-20T08:00:00Z",
+    updatedAt: "2026-05-20T13:30:00Z"
   },
   {
     id: "cadet-task-p2-003",
@@ -120,7 +120,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Bridge Pyrotechnics Inventory & Line-Throwing Apparatus Verification",
     description: "Inspected bridge emergency distress pyrotechnic locker. Checked 12 rocket parachute flares, 4 red hand flares, 2 buoyant orange smoke signals, and 4 bridge wing MOB smoke/light marker units.",
     assistDescription: "Assisted 3rd Officer with verifying propellant shelf-life dates, checking watertight rubber seals on containment container, and updating SOLAS Pyrotechnics Register.",
-    date: "2026-08-11",
+    date: "2026-06-11",
     status: "In Progress",
     documentationName: "Pyrotechnics_Locker_Check.pdf",
     documentationType: "document",
@@ -132,8 +132,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 2,
     location: "Navigation Bridge Pyrotechnics Locker",
-    createdAt: "2026-08-11T11:00:00Z",
-    updatedAt: "2026-08-11T12:30:00Z"
+    createdAt: "2026-06-11T11:00:00Z",
+    updatedAt: "2026-06-11T12:30:00Z"
   },
 
   // --- PHASE 3: 2ND OFFICER ASSIST (Months 7–9) ---
@@ -143,7 +143,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Weekly ECDIS ENC Chart Updates & Notice to Mariners",
     description: "Loaded Admiralty Vector Chart Service (AVCS) Base/Update DVDs into Transas Navi-Sailor 4000 ECDIS. Verified installation of 142 Electronic Navigational Chart (ENC) updates along Malacca Strait and Singapore Strait passages.",
     assistDescription: "Assisted 2nd Officer in plotting Temporary & Preliminary (T&P) Notices, reviewing Admiralty Notices to Mariners (ANM) Week 34, and applying manual chart corrections to paper backup chart BA 3833.",
-    date: "2026-08-28",
+    date: "2026-07-28",
     status: "Approved by Officer",
     documentationName: "ECDIS_ENC_Update_Log_W34.png",
     documentationType: "image",
@@ -156,8 +156,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 4,
     location: "Navigation Bridge Chart Table",
-    createdAt: "2026-08-28T14:00:00Z",
-    updatedAt: "2026-08-28T18:30:00Z"
+    createdAt: "2026-07-28T14:00:00Z",
+    updatedAt: "2026-07-28T18:30:00Z"
   },
   {
     id: "cadet-task-p3-002",
@@ -165,7 +165,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Passage Plan Preparation & Under-Keel Clearance (UKC) Calculations",
     description: "Assisted in calculating waypoint coordinates, cross-track limits (XTL), safety depth contours, and wheel-over positions for approaching Tokyo Bay Traffic Separation Scheme (TSS).",
     assistDescription: "Assisted 2nd Officer with dynamic squat calculations at 12 knots in shallow waters, verifying minimum company gross UKC margin of 10% draft.",
-    date: "2026-09-15",
+    date: "2026-08-15",
     status: "Completed",
     documentationName: "Tokyo_Bay_Passage_Plan_Annex.pdf",
     documentationType: "document",
@@ -177,8 +177,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 5,
     location: "Bridge Voyage Planning Station",
-    createdAt: "2026-09-15T09:00:00Z",
-    updatedAt: "2026-09-15T16:00:00Z"
+    createdAt: "2026-08-15T09:00:00Z",
+    updatedAt: "2026-08-15T16:00:00Z"
   },
   {
     id: "cadet-task-p3-003",
@@ -210,7 +210,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Draft Survey & Loading Computer Bending Moment Calculations",
     description: "Conducted arrival draft survey in port. Read draft marks forward, midships port/starboard, and aft using pilot ladder. Computed mean draft, true trim, and water density hydrometer correction to verify cargo quantity onboard.",
     assistDescription: "Assisted Chief Officer in inputting cargo stowage weights into the approved vessel loading computer, verifying Shearing Forces (SF) and Bending Moments (BM) within 78% of maximum seagoing limits.",
-    date: "2026-10-01",
+    date: "2026-10-18",
     status: "Approved by Officer",
     documentationName: "Draft_Survey_Report_Density_Corrected.pdf",
     documentationType: "document",
@@ -223,8 +223,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 4.5,
     location: "Shipside Pilot Ladder & Cargo Office",
-    createdAt: "2026-10-01T07:30:00Z",
-    updatedAt: "2026-10-01T13:45:00Z"
+    createdAt: "2026-10-18T07:30:00Z",
+    updatedAt: "2026-10-18T13:45:00Z"
   },
   {
     id: "cadet-task-p4-002",
@@ -232,7 +232,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Ballast Water Treatment (BWTS) Operation & D-2 Logbook Documentation",
     description: "Monitored automated UV and electro-chlorination Ballast Water Management System (BWMS) during discharge of 4,200 m³ from Forepeak and Double Bottom Ballast Tanks No. 2 P/S.",
     assistDescription: "Assisted Chief Officer in logging pump runtimes, UV intensity sensor values, salinity, tro-sensors, and completing official entries in the IMO Ballast Water Record Book.",
-    date: "2026-10-02",
+    date: "2026-11-12",
     status: "Pending Review",
     documentationName: "Ballast_Record_Book_Log_BWMS.jpg",
     documentationType: "checklist",
@@ -245,8 +245,8 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 3,
     location: "Cargo Control Room (CCR) & Ballast Pump Room",
-    createdAt: "2026-10-02T10:00:00Z",
-    updatedAt: "2026-10-02T13:00:00Z"
+    createdAt: "2026-11-12T10:00:00Z",
+    updatedAt: "2026-11-12T13:00:00Z"
   },
   {
     id: "cadet-task-p4-003",
@@ -254,7 +254,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     title: "Permit to Work (PTW) & Enclosed Space Entry Multi-Gas Atmospheric Test",
     description: "Accompanied Chief Officer for pre-entry inspection of Cargo Hold No. 1 Lower Bilge Wells. Conducted 4-gas atmosphere testing (Oxygen, Lower Explosive Limit, Carbon Monoxide, Hydrogen Sulfide).",
     assistDescription: "Assisted Chief Officer with completing Enclosed Space Entry Checklist, establishing communication links via UHF intrinsically safe radio, and deploying emergency rescue tripod & harness at hatch access trunk.",
-    date: "2026-10-05",
+    date: "2026-12-05",
     status: "In Progress",
     documentationName: "Enclosed_Space_Permit_Gas_Check.pdf",
     documentationType: "checklist",
@@ -266,7 +266,7 @@ export const DEFAULT_CADET_TASKS: CadetTaskItem[] = [
     cadetId: "ITA-99214-C",
     hoursSpent: 3.5,
     location: "Cargo Hold No. 1 Trunkway",
-    createdAt: "2026-10-02T14:30:00Z",
-    updatedAt: "2026-10-02T15:00:00Z"
+    createdAt: "2026-12-05T14:30:00Z",
+    updatedAt: "2026-12-05T15:00:00Z"
   }
 ];
