@@ -379,13 +379,35 @@ export default function DepartmentDirectory() {
 
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => getStoredUserProfile());
 
-  // Listen to profile updates
+  // Listen to profile updates & crew roster updates
   useEffect(() => {
     const handleProfileChange = () => {
       setCurrentUser(getStoredUserProfile());
+      const saved = localStorage.getItem("sms_crewList");
+      if (saved) {
+        try {
+          setCrewList(JSON.parse(saved));
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+    const handleCrewChange = () => {
+      const saved = localStorage.getItem("sms_crewList");
+      if (saved) {
+        try {
+          setCrewList(JSON.parse(saved));
+        } catch (e) {
+          console.error(e);
+        }
+      }
     };
     window.addEventListener("sms_user_profile_changed", handleProfileChange);
-    return () => window.removeEventListener("sms_user_profile_changed", handleProfileChange);
+    window.addEventListener("sms_crewList_changed", handleCrewChange);
+    return () => {
+      window.removeEventListener("sms_user_profile_changed", handleProfileChange);
+      window.removeEventListener("sms_crewList_changed", handleCrewChange);
+    };
   }, []);
 
   const isMeMember = (member: CrewMemberProfile) => {

@@ -1,5 +1,13 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, User as FirebaseUser } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut as fbSignOut, 
+  User as FirebaseUser,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -79,6 +87,36 @@ export async function loginWithGoogle(): Promise<FirebaseUser | null> {
     return result.user;
   } catch (error) {
     console.error("Google Sign-In Error:", error);
+    throw error;
+  }
+}
+
+export async function loginWithEmail(email: string, password: string): Promise<FirebaseUser> {
+  try {
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    return result.user;
+  } catch (error: any) {
+    const code = error?.code || '';
+    if (code !== 'auth/invalid-credential' && code !== 'auth/user-not-found' && code !== 'auth/wrong-password') {
+      console.error("Email Sign-In Error:", error);
+    } else {
+      console.warn("Email Sign-In rejected (invalid credentials or unregistered account):", code);
+    }
+    throw error;
+  }
+}
+
+export async function signUpWithEmail(email: string, password: string): Promise<FirebaseUser> {
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email, password);
+    return result.user;
+  } catch (error: any) {
+    const code = error?.code || '';
+    if (code !== 'auth/email-already-in-use') {
+      console.error("Email Sign-Up Error:", error);
+    } else {
+      console.warn("Email Sign-Up rejected (email already in use):", code);
+    }
     throw error;
   }
 }

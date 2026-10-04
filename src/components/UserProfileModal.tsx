@@ -18,6 +18,7 @@ import {
 import { UserProfile, DEPARTMENT_RANKS, getStoredUserProfile } from "../types/userProfile";
 import { WORLDWIDE_NATIONALITIES } from "../constants/maritimeData";
 import { syncUserProfileWithSystem } from "../utils/userProfileSync";
+import { useFirebase } from "../context/FirebaseContext";
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ interface UserProfileModalProps {
 }
 
 export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: UserProfileModalProps) {
+  const { currentUser, saveFirestoreProfile, logout } = useFirebase();
   const [profile, setProfile] = useState<UserProfile>(() => getStoredUserProfile());
   const [department, setDepartment] = useState<"Deck" | "Engine" | "Catering">("Deck");
   const [rank, setRank] = useState<string>("Second Officer");
@@ -75,11 +77,26 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
       rank,
       seafarerId: seafarerId.trim().toUpperCase(),
       nationality,
+      email: currentUser?.email || profile.email || "",
+      userId: currentUser?.uid || profile.userId,
       isLoggedIn: true
     };
 
     syncUserProfileWithSystem(updatedProfile);
     setProfile(updatedProfile);
+    
+    // Save to Cloud Firestore if user is authenticated
+    if (currentUser) {
+      saveFirestoreProfile({
+        fullName: updatedProfile.fullName,
+        department: updatedProfile.department,
+        rank: updatedProfile.rank,
+        seafarerId: updatedProfile.seafarerId,
+        nationality: updatedProfile.nationality,
+        email: currentUser.email || ""
+      }).catch(err => console.error("Firestore profile update error:", err));
+    }
+
     setSavedSuccess(true);
     if (onProfileUpdated) {
       onProfileUpdated(updatedProfile);
@@ -299,10 +316,24 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
 
           {/* Actions */}
           <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-[9px] font-mono text-slate-400 uppercase flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00A86B]" />
-              Synced across PMS & Watch Hours
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[9px] font-mono text-slate-400 uppercase flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-[#00A86B]" />
+                Synced across PMS & Watch Hours
+              </span>
+              {currentUser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    onClose();
+                  }}
+                  className="text-[10px] font-mono text-red-600 hover:text-red-800 underline uppercase cursor-pointer"
+                >
+                  Sign Out
+                </button>
+              )}
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"

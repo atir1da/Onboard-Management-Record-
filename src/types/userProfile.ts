@@ -5,6 +5,8 @@ export interface UserProfile {
   seafarerId: string;
   nationality: string;
   isLoggedIn?: boolean;
+  email?: string;
+  userId?: string;
 }
 
 export const DEPARTMENT_RANKS: Record<"Deck" | "Engine" | "Catering", string[]> = {

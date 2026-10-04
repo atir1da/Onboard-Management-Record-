@@ -90,6 +90,31 @@
         "updatedAt": { "type": "string", "description": "ISO update timestamp" }
       },
       "required": ["id", "name", "responsibility", "status"]
+    },
+    "CadetTask": {
+      "title": "CadetTask",
+      "description": "Deck Cadet Training Record Book sea project task and documentation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique task identifier" },
+        "phase": { "type": "string", "description": "Rotation phase: bosun_assist, third_officer_assist, second_officer_assist, or chief_officer_assist" },
+        "title": { "type": "string", "description": "Task module title" },
+        "description": { "type": "string", "description": "Detailed entry of shipboard tasks performed" },
+        "assistDescription": { "type": "string", "description": "Duties assisted under officer supervision" },
+        "date": { "type": "string", "description": "Task date YYYY-MM-DD" },
+        "status": { "type": "string", "description": "Pending Review, In Progress, Completed, or Approved by Officer" },
+        "documentationName": { "type": "string", "description": "Attachment evidence filename" },
+        "documentationUrl": { "type": "string", "description": "Attachment evidence URL or scan" },
+        "officerMentor": { "type": "string", "description": "Supervising officer name" },
+        "officerRemarks": { "type": "string", "description": "Officer verification remarks" },
+        "trbReference": { "type": "string", "description": "STCW TRB reference code" },
+        "cadetName": { "type": "string", "description": "Trainee cadet name" },
+        "cadetId": { "type": "string", "description": "Seafarer CDC book number" },
+        "hoursSpent": { "type": "number", "description": "Hours spent on task" },
+        "location": { "type": "string", "description": "Shipboard compartment or deck location" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      },
+      "required": ["id", "phase", "title", "description", "assistDescription", "date", "status"]
     }
   },
   "firestore": {
@@ -112,6 +137,10 @@
     "/safety_drills/{drillId}": {
       "schema": { "$ref": "#/entities/SafetyDrill" },
       "description": "Safety drills and training exercises"
+    },
+    "/cadet_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/CadetTask" },
+      "description": "Cadet sea training project tasks and log entries"
     }
   }
 }

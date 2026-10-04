@@ -21,8 +21,7 @@ service cloud.firestore {
 
     // User profile documents
     match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow list: if false;
+      allow read: if isOwner(userId);
       allow create, update: if isOwner(userId) && isValidId(userId);
       allow delete: if isOwner(userId);
     }
@@ -53,6 +52,13 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn() && isValidId(drillId);
       allow delete: if isSignedIn() && isValidId(drillId);
+    }
+
+    // Deck Cadet Report & Training tasks
+    match /cadet_tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(taskId);
+      allow delete: if isSignedIn() && isValidId(taskId);
     }
   }
 }
