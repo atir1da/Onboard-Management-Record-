@@ -1,8 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  MapPin, 
-  Calendar, 
   Navigation, 
   Compass, 
   Anchor, 
@@ -10,1467 +8,1451 @@ import {
   ArrowRight, 
   Search, 
   Gauge, 
-  Info, 
-  Activity, 
-  Map, 
-  Layers, 
-  Sliders, 
+  Calendar as CalendarIcon, 
+  ChevronLeft, 
+  ChevronRight, 
+  Plus, 
+  Edit3, 
+  Trash2, 
+  FileSpreadsheet, 
+  CheckCircle2, 
+  AlertCircle, 
   Ship, 
-  ChevronDown, 
-  ChevronUp, 
-  Play, 
-  Pause, 
-  RotateCcw,
-  CheckCircle,
-  AlertTriangle,
-  HelpCircle,
-  Lock,
-  Unlock,
-  Save
+  Layers, 
+  Filter, 
+  Sliders, 
+  MapPin, 
+  Box, 
+  Fuel, 
+  User, 
+  X,
+  TrendingUp,
+  Globe2,
+  CalendarDays
 } from "lucide-react";
-import { WORLDWIDE_FLAGS } from "../constants/maritimeData";
-import { getExpandedPortsForCountry } from "../constants/expandedPorts";
-
-interface Port {
-  name: string;
-  code: string;
-  lat: string;
-  lng: string;
-  latDeg: number;
-  lngDeg: number;
-}
-
-function getPortsForCountry(countryName: string): Port[] {
-  return getExpandedPortsForCountry(countryName);
-}
-
-function parseCoordinateToDecimal(coordStr: string, isLat: boolean): number {
-  if (!coordStr) return 0;
-  const cleaned = coordStr.trim().toUpperCase();
-  
-  // 1. Check if it's already a clean decimal float
-  if (/^-?\d+(\.\d+)?$/.test(cleaned)) {
-    return parseFloat(cleaned);
-  }
-  
-  // 2. Match standard degrees, minutes, direction: e.g. "41° 18.00' N" or "41 18.00 N"
-  const match = cleaned.match(/(\d+(?:\.\d+)?)\s*[°d]?\s*(\d+(?:\.\d+)?)\s*['′]?\s*([NSEW])/);
-  if (match) {
-    const deg = parseFloat(match[1]);
-    const min = parseFloat(match[2]) || 0;
-    const dir = match[3];
-    let dec = deg + min / 60;
-    if (dir === "S" || dir === "W") {
-      dec = -dec;
-    }
-    return dec;
-  }
-  
-  // 3. General numeric float extract fallback
-  const numMatch = cleaned.match(/-?\d+(?:\.\d+)?/);
-  if (numMatch) {
-    let val = parseFloat(numMatch[0]);
-    if (cleaned.includes("S") || cleaned.includes("W")) {
-      val = -Math.abs(val);
-    }
-    return val;
-  }
-  
-  return 0;
-}
-
-function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 3440.065; // Earth radius in Nautical Miles
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c;
-  return Math.round(d);
-}
+import { 
+  VoyageRecord, 
+  VoyageStatus, 
+  CargoLoadingStatus, 
+  PortDetails, 
+  POPULAR_WORLD_PORTS, 
+  getStoredVoyages, 
+  saveStoredVoyages, 
+  getVoyageSummaryStats 
+} from "../types/voyagePlanning";
+import { getStoredUserProfile } from "../types/userProfile";
+import { exportVoyagePlanningBackup } from "../utils/excelBackup";
 
 export default function VoyagePlanning() {
-  const vesselName = useMemo(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("sms_vesselName") || "PACIFIC SENTINEL";
-    }
-    return "PACIFIC SENTINEL";
-  }, []);
-
-  // Parse flags & country data from constants
-  const parsedNations = useMemo(() => {
-    return WORLDWIDE_FLAGS.map((f, idx) => {
-      const parts = f.split(" ");
-      const flag = parts[parts.length - 1]; // Flag emoji is at the end
-      const country = parts.slice(0, parts.length - 1).join(" ");
-      return {
-        country,
-        flag: flag || "🌐"
-      };
-    });
-  }, []);
-
-  // Country selection states
-  const [depCountry, setDepCountry] = useState<any>(() => {
-    const savedDep = typeof window !== "undefined" ? localStorage.getItem("sms_voyage_dep_country") : null;
-    return parsedNations.find(n => savedDep ? n.country === savedDep : n.country.includes("Singapore")) || parsedNations[0];
-  });
-  
-  const [arrCountry, setArrCountry] = useState<any>(() => {
-    const savedArr = typeof window !== "undefined" ? localStorage.getItem("sms_voyage_arr_country") : null;
-    return parsedNations.find(n => savedArr ? n.country === savedArr : n.country.includes("China")) || parsedNations[1];
-  });
-
-  // Available ports based on country selection
-  const depPorts = useMemo(() => getPortsForCountry(depCountry.country), [depCountry]);
-  const arrPorts = useMemo(() => getPortsForCountry(arrCountry.country), [arrCountry]);
-
-  // Selected ports
-  const [selectedDepPort, setSelectedDepPort] = useState<Port>(() => {
-    const savedPortCode = typeof window !== "undefined" ? localStorage.getItem("sms_voyage_dep_port_code") : null;
-    return depPorts.find(p => p.code === savedPortCode) || depPorts[0];
-  });
-  
-  const [selectedArrPort, setSelectedArrPort] = useState<Port>(() => {
-    const savedPortCode = typeof window !== "undefined" ? localStorage.getItem("sms_voyage_arr_port_code") : null;
-    return arrPorts.find(p => p.code === savedPortCode) || arrPorts[0];
-  });
-
-  // Synchronize port state when country changes
-  useEffect(() => {
-    if (!depPorts.some(p => p.code === selectedDepPort?.code)) {
-      setSelectedDepPort(depPorts[0]);
-    }
-  }, [depPorts]);
-
-  useEffect(() => {
-    if (!arrPorts.some(p => p.code === selectedArrPort?.code)) {
-      setSelectedArrPort(arrPorts[0]);
-    }
-  }, [arrPorts]);
-
-  const activeDepPort = selectedDepPort || depPorts[0];
-  const activeArrPort = selectedArrPort || arrPorts[0];
-
-  // Map Activation Gate State
-  const [isMapActivated, setIsMapActivated] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("sms_voyage_saved") === "true";
-    }
-    return false;
-  });
-
-  // Inputs & Overrides
-  const [speed, setSpeed] = useState<number>(() => {
-    if (typeof window !== "undefined") {
-      const savedSpeed = localStorage.getItem("sms_voyage_speed");
-      if (savedSpeed) return parseFloat(savedSpeed);
-    }
-    return 15.0;
-  });
-  
-  const [etd, setEtd] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const savedEtd = localStorage.getItem("sms_voyage_etd");
-      if (savedEtd) return savedEtd;
-    }
-    return "2026-07-15T08:00";
-  });
-
-  // Dropdown states
-  const [showDepDropdown, setShowDepDropdown] = useState(false);
-  const [showArrDropdown, setShowArrDropdown] = useState(false);
-  const [searchDep, setSearchDep] = useState("");
-  const [searchArr, setSearchArr] = useState("");
-
-  // Search filter
-  const filteredDepNations = useMemo(() => {
-    if (!searchDep.trim()) return parsedNations.slice(0, 50);
-    return parsedNations.filter(
-      n => n.country.toLowerCase().includes(searchDep.toLowerCase())
-    );
-  }, [parsedNations, searchDep]);
-
-  const filteredArrNations = useMemo(() => {
-    if (!searchArr.trim()) return parsedNations.slice(0, 50);
-    return parsedNations.filter(
-      n => n.country.toLowerCase().includes(searchArr.toLowerCase())
-    );
-  }, [parsedNations, searchArr]);
-
-  // Editable calibrator coordinates
-  const [depLatInput, setDepLatInput] = useState<string>("");
-  const [depLngInput, setDepLngInput] = useState<string>("");
-  const [arrLatInput, setArrLatInput] = useState<string>("");
-  const [arrLngInput, setArrLngInput] = useState<string>("");
-
-  // Saved calibrator coordinates
-  const [savedDepCoords, setSavedDepCoords] = useState<{ lat: string; lng: string; latDeg: number; lngDeg: number } | null>(() => {
-    if (typeof window !== "undefined") {
-      const lat = localStorage.getItem("sms_voyage_saved_dep_lat");
-      const lng = localStorage.getItem("sms_voyage_saved_dep_lng");
-      const latDeg = localStorage.getItem("sms_voyage_saved_dep_lat_deg");
-      const lngDeg = localStorage.getItem("sms_voyage_saved_dep_lng_deg");
-      if (lat && lng && latDeg && lngDeg) {
-        return { lat, lng, latDeg: parseFloat(latDeg), lngDeg: parseFloat(lngDeg) };
-      }
-    }
-    return null;
-  });
-
-  const [savedArrCoords, setSavedArrCoords] = useState<{ lat: string; lng: string; latDeg: number; lngDeg: number } | null>(() => {
-    if (typeof window !== "undefined") {
-      const lat = localStorage.getItem("sms_voyage_saved_arr_lat");
-      const lng = localStorage.getItem("sms_voyage_saved_arr_lng");
-      const latDeg = localStorage.getItem("sms_voyage_saved_arr_lat_deg");
-      const lngDeg = localStorage.getItem("sms_voyage_saved_arr_lng_deg");
-      if (lat && lng && latDeg && lngDeg) {
-        return { lat, lng, latDeg: parseFloat(latDeg), lngDeg: parseFloat(lngDeg) };
-      }
-    }
-    return null;
-  });
-
-  // Synchronize inputs with ports if they haven't been manually edited/locked
-  useEffect(() => {
-    if (activeDepPort) {
-      setDepLatInput(activeDepPort.lat);
-      setDepLngInput(activeDepPort.lng);
-    }
-  }, [activeDepPort]);
-
-  useEffect(() => {
-    if (activeArrPort) {
-      setArrLatInput(activeArrPort.lat);
-      setArrLngInput(activeArrPort.lng);
-    }
-  }, [activeArrPort]);
-
-  // Automatically computed Distance
-  const distance = useMemo(() => {
-    if (isMapActivated && savedDepCoords && savedArrCoords) {
-      return calculateHaversineDistance(
-        savedDepCoords.latDeg,
-        savedDepCoords.lngDeg,
-        savedArrCoords.latDeg,
-        savedArrCoords.lngDeg
-      );
-    }
-
-    const currentDepLat = parseCoordinateToDecimal(depLatInput, true);
-    const currentDepLng = parseCoordinateToDecimal(depLngInput, false);
-    const currentArrLat = parseCoordinateToDecimal(arrLatInput, true);
-    const currentArrLng = parseCoordinateToDecimal(arrLngInput, false);
-
-    const lat1 = !isNaN(currentDepLat) && currentDepLat !== 0 ? currentDepLat : (activeDepPort?.latDeg || 0);
-    const lon1 = !isNaN(currentDepLng) && currentDepLng !== 0 ? currentDepLng : (activeDepPort?.lngDeg || 0);
-    const lat2 = !isNaN(currentArrLat) && currentArrLat !== 0 ? currentArrLat : (activeArrPort?.latDeg || 0);
-    const lon2 = !isNaN(currentArrLng) && currentArrLng !== 0 ? currentArrLng : (activeArrPort?.lngDeg || 0);
-
-    return calculateHaversineDistance(lat1, lon1, lat2, lon2);
-  }, [isMapActivated, savedDepCoords, savedArrCoords, depLatInput, depLngInput, arrLatInput, arrLngInput, activeDepPort, activeArrPort]);
-
-  // Dynamic calculations
-  const durationHours = useMemo(() => {
-    if (speed <= 0 || isNaN(speed) || isNaN(distance) || distance <= 0) return 0;
-    return distance / speed;
-  }, [distance, speed]);
-
-  const eta = useMemo(() => {
-    if (durationHours <= 0) return "—";
-    const etdDate = new Date(etd);
-    if (isNaN(etdDate.getTime())) return "—";
-    const etaDate = new Date(etdDate.getTime() + durationHours * 60 * 60 * 1000);
-    
-    // Format: YYYY-MM-DD HH:mm
-    const yyyy = etaDate.getFullYear();
-    const mm = String(etaDate.getMonth() + 1).padStart(2, "0");
-    const dd = String(etaDate.getDate()).padStart(2, "0");
-    const hh = String(etaDate.getHours()).padStart(2, "0");
-    const min = String(etaDate.getMinutes()).padStart(2, "0");
-    
-    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
-  }, [etd, durationHours]);
-
-  const formattedDuration = useMemo(() => {
-    if (durationHours <= 0) return "0.0 hrs";
-    const days = Math.floor(durationHours / 24);
-    const remainingHours = Math.floor(durationHours % 24);
-    const minutes = Math.round((durationHours % 1) * 60);
-    
-    let str = "";
-    if (days > 0) str += `${days}d `;
-    if (remainingHours > 0 || days > 0) str += `${remainingHours}h `;
-    if (minutes > 0) str += `${minutes}m`;
-    
-    return `${str.trim()} (${durationHours.toFixed(1)} hrs)`;
-  }, [durationHours]);
-
-  // Device GPS Tracker
-  const [gpsAnchor, setGpsAnchor] = useState<{ lat: string; lng: string }>({
-    lat: "34° 02.40' N",
-    lng: "118° 29.70' W"
-  });
-
-  useEffect(() => {
-    const updateGps = () => {
-      if (typeof window !== "undefined") {
-        const lat = localStorage.getItem("sms_gps_lat") || "34° 02.40' N";
-        const lng = localStorage.getItem("sms_gps_lng") || "118° 29.70' W";
-        setGpsAnchor({ lat, lng });
-      }
-    };
-    updateGps();
-    const interval = setInterval(updateGps, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Map Scale States
-  type MapScale = "general" | "coastal" | "approach" | "harbor";
-  const [mapScale, setMapScale] = useState<MapScale>("general");
-
-  // Route Playback Animation States
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [simProgress, setSimProgress] = useState(40); // Initial 40% along the path
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isPlaying) {
-      timer = setInterval(() => {
-        setSimProgress((prev) => {
-          if (prev >= 100) return 0; // Loop back
-          return prev + 1;
-        });
-      }, 300);
-    }
-    return () => clearInterval(timer);
-  }, [isPlaying]);
-
-  // Notification Banner
+  const [voyages, setVoyages] = useState<VoyageRecord[]>(() => getStoredVoyages());
+  const [activeFilterTab, setActiveFilterTab] = useState<"all" | "active" | "upcoming" | "completed">("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [notification, setNotification] = useState<string | null>(null);
+
+  // Calendar View States
+  const [calendarDate, setCalendarDate] = useState<Date>(() => new Date(2026, 9, 1)); // October 2026 default
+  const [selectedCalendarDateStr, setSelectedCalendarDateStr] = useState<string | null>(null);
+
+  // Modal States: Create / Edit Voyage Form
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [editingVoyage, setEditingVoyage] = useState<VoyageRecord | null>(null);
+
+  // Form Fields
+  const [formVoyageNumber, setFormVoyageNumber] = useState("");
+  const [formDepPortName, setFormDepPortName] = useState("");
+  const [formDepCountry, setFormDepCountry] = useState("");
+  const [formDepLocode, setFormDepLocode] = useState("");
+  const [formArrPortName, setFormArrPortName] = useState("");
+  const [formArrCountry, setFormArrCountry] = useState("");
+  const [formArrLocode, setFormArrLocode] = useState("");
+  const [formEtd, setFormEtd] = useState("");
+  const [formAtd, setFormAtd] = useState("");
+  const [formEta, setFormEta] = useState("");
+  const [formAta, setFormAta] = useState("");
+  const [formCargoType, setFormCargoType] = useState("");
+  const [formCargoQuantity, setFormCargoQuantity] = useState<number>(50000);
+  const [formCargoUnit, setFormCargoUnit] = useState<string>("MT");
+  const [formLoadingStatus, setFormLoadingStatus] = useState<CargoLoadingStatus>("Loaded");
+  const [formDistanceNm, setFormDistanceNm] = useState<number>(3500);
+  const [formAvgSpeedKts, setFormAvgSpeedKts] = useState<number>(15.5);
+  const [formStatus, setFormStatus] = useState<VoyageStatus>("Planned");
+  const [formMasterName, setFormMasterName] = useState("Capt. Alexander Sterling");
+  const [formChiefOfficerName, setFormChiefOfficerName] = useState("Mateo Rodriguez");
+  const [formRemarks, setFormRemarks] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Detail Inspection Modal
+  const [viewingVoyage, setViewingVoyage] = useState<VoyageRecord | null>(null);
+
+  // Delete Confirmation Modal
+  const [voyageToDelete, setVoyageToDelete] = useState<VoyageRecord | null>(null);
+
+  const currentUser = useMemo(() => getStoredUserProfile(), []);
+  const vesselName = useMemo(() => localStorage.getItem("sms_vesselName") || "PACIFIC SENTINEL", []);
+
+  // Save to localStorage whenever voyages state changes
+  useEffect(() => {
+    saveStoredVoyages(voyages);
+  }, [voyages]);
+
   const triggerNotification = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => {
+      setNotification(prev => prev === msg ? null : prev);
+    }, 4500);
   };
 
-  const handleSaveVoyagePlan = () => {
-    if (depCountry.country === arrCountry.country && activeDepPort.code === activeArrPort.code) {
-      triggerNotification("⚠️ Validation Error: Departure and Arrival ports cannot be identical.");
-      return;
-    }
-    if (speed <= 0 || speed > 35) {
-      triggerNotification("⚠️ Validation Error: Speed must be between 0.1 and 35.0 knots.");
-      return;
-    }
-    const etdDate = new Date(etd);
-    if (isNaN(etdDate.getTime())) {
-      triggerNotification("⚠️ Validation Error: Departure time is invalid.");
-      return;
-    }
+  // Compute Summary Statistics
+  const summaryStats = useMemo(() => getVoyageSummaryStats(voyages), [voyages]);
 
-    // Capture, parse and lock coordinates
-    const currentDepLat = parseCoordinateToDecimal(depLatInput, true);
-    const currentDepLng = parseCoordinateToDecimal(depLngInput, false);
-    const currentArrLat = parseCoordinateToDecimal(arrLatInput, true);
-    const currentArrLng = parseCoordinateToDecimal(arrLngInput, false);
+  // Active in-transit voyage (if any)
+  const currentActiveVoyage = useMemo(() => {
+    return voyages.find(v => v.status === "In Transit") || null;
+  }, [voyages]);
 
-    const depCoords = {
-      lat: depLatInput || activeDepPort.lat,
-      lng: depLngInput || activeDepPort.lng,
-      latDeg: !isNaN(currentDepLat) && currentDepLat !== 0 ? currentDepLat : activeDepPort.latDeg,
-      lngDeg: !isNaN(currentDepLng) && currentDepLng !== 0 ? currentDepLng : activeDepPort.lngDeg
-    };
+  // Filtered voyages
+  const filteredVoyages = useMemo(() => {
+    return voyages.filter(v => {
+      // 1. Status Filter
+      if (activeFilterTab === "active" && v.status !== "In Transit") return false;
+      if (activeFilterTab === "upcoming" && v.status !== "Planned" && v.status !== "Delayed") return false;
+      if (activeFilterTab === "completed" && v.status !== "Completed") return false;
 
-    const arrCoords = {
-      lat: arrLatInput || activeArrPort.lat,
-      lng: arrLngInput || activeArrPort.lng,
-      latDeg: !isNaN(currentArrLat) && currentArrLat !== 0 ? currentArrLat : activeArrPort.latDeg,
-      lngDeg: !isNaN(currentArrLng) && currentArrLng !== 0 ? currentArrLng : activeArrPort.lngDeg
-    };
+      // 2. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchNumber = v.voyageNumber.toLowerCase().includes(q);
+        const matchDep = v.departurePort.name.toLowerCase().includes(q) || v.departurePort.locode.toLowerCase().includes(q);
+        const matchArr = v.arrivalPort.name.toLowerCase().includes(q) || v.arrivalPort.locode.toLowerCase().includes(q);
+        const matchCargo = v.cargoType.toLowerCase().includes(q);
+        if (!matchNumber && !matchDep && !matchArr && !matchCargo) return false;
+      }
 
-    setSavedDepCoords(depCoords);
-    setSavedArrCoords(arrCoords);
+      // 3. Calendar Date filter
+      if (selectedCalendarDateStr) {
+        const depDate = (v.atd || v.etd).split("T")[0];
+        const arrDate = (v.ata || v.eta).split("T")[0];
+        if (selectedCalendarDateStr < depDate || selectedCalendarDateStr > arrDate) {
+          return false;
+        }
+      }
 
-    // Save variables to cache
-    localStorage.setItem("sms_voyage_saved", "true");
-    localStorage.setItem("sms_voyage_dep_country", depCountry.country);
-    localStorage.setItem("sms_voyage_dep_port_code", activeDepPort.code);
-    localStorage.setItem("sms_voyage_arr_country", arrCountry.country);
-    localStorage.setItem("sms_voyage_arr_port_code", activeArrPort.code);
-    localStorage.setItem("sms_voyage_speed", speed.toString());
-    localStorage.setItem("sms_voyage_etd", etd);
+      return true;
+    });
+  }, [voyages, activeFilterTab, searchQuery, selectedCalendarDateStr]);
 
-    localStorage.setItem("sms_voyage_saved_dep_lat", depCoords.lat);
-    localStorage.setItem("sms_voyage_saved_dep_lng", depCoords.lng);
-    localStorage.setItem("sms_voyage_saved_dep_lat_deg", depCoords.latDeg.toString());
-    localStorage.setItem("sms_voyage_saved_dep_lng_deg", depCoords.lngDeg.toString());
-
-    localStorage.setItem("sms_voyage_saved_arr_lat", arrCoords.lat);
-    localStorage.setItem("sms_voyage_saved_arr_lng", arrCoords.lng);
-    localStorage.setItem("sms_voyage_saved_arr_lat_deg", arrCoords.latDeg.toString());
-    localStorage.setItem("sms_voyage_saved_arr_lng_deg", arrCoords.lngDeg.toString());
-
-    setIsMapActivated(true);
-    setSimProgress(0); // Reset animation
-    triggerNotification("💾 Voyage Plan SAVED! Real-time routing map is now ACTIVE.");
+  // Open Create Modal
+  const handleOpenCreateModal = () => {
+    setEditingVoyage(null);
+    const nextNum = `V.0${voyages.length + 10}-PASSAGE`;
+    setFormVoyageNumber(nextNum);
+    setFormDepPortName("Port of Singapore");
+    setFormDepCountry("Singapore");
+    setFormDepLocode("SGSIN");
+    setFormArrPortName("Port of Rotterdam");
+    setFormArrCountry("Netherlands");
+    setFormArrLocode("NLRTM");
+    setFormEtd("2026-11-05T08:00");
+    setFormAtd("");
+    setFormEta("2026-11-28T18:00");
+    setFormAta("");
+    setFormCargoType("Containerized General Goods & High-Tech Electronics");
+    setFormCargoQuantity(65000);
+    setFormCargoUnit("MT");
+    setFormLoadingStatus("Loaded");
+    setFormDistanceNm(8350);
+    setFormAvgSpeedKts(15.2);
+    setFormStatus("Planned");
+    setFormMasterName("Capt. Alexander Sterling");
+    setFormChiefOfficerName("Mateo Rodriguez");
+    setFormRemarks("Standard passage plan via Malacca Strait, Indian Ocean, and English Channel.");
+    setFormError(null);
+    setIsFormModalOpen(true);
   };
 
-  const handleApplyPreset = (presetName: string, distVal: number, speedVal: number) => {
-    if (presetName.includes("Singapore")) {
-      const sgNation = parsedNations.find(n => n.country.includes("Singapore"));
-      if (sgNation) {
-        setDepCountry(sgNation);
-        const ports = getPortsForCountry(sgNation.country);
-        setSelectedDepPort(ports[0]);
-      }
-      const chNation = parsedNations.find(n => n.country.includes("China"));
-      if (chNation) {
-        setArrCountry(chNation);
-        const ports = getPortsForCountry(chNation.country);
-        setSelectedArrPort(ports[0]);
-      }
-    } else if (presetName.includes("Rotterdam")) {
-      const nlNation = parsedNations.find(n => n.country.includes("Netherlands"));
-      if (nlNation) {
-        setDepCountry(nlNation);
-        const ports = getPortsForCountry(nlNation.country);
-        setSelectedDepPort(ports[0]);
-      }
-      const usNation = parsedNations.find(n => n.country.includes("United States"));
-      if (usNation) {
-        setArrCountry(usNation);
-        const ports = getPortsForCountry(usNation.country);
-        const nyPort = ports.find(p => p.code === "USNYNJ") || ports[0];
-        setSelectedArrPort(nyPort);
-      }
-    } else if (presetName.includes("Tokyo")) {
-      const jpNation = parsedNations.find(n => n.country.includes("Japan"));
-      if (jpNation) {
-        setDepCountry(jpNation);
-        const ports = getPortsForCountry(jpNation.country);
-        setSelectedDepPort(ports[0]);
-      }
-      const usNation = parsedNations.find(n => n.country.includes("United States"));
-      if (usNation) {
-        setArrCountry(usNation);
-        const ports = getPortsForCountry(usNation.country);
-        const laPort = ports.find(p => p.code === "USLAX") || ports[0];
-        setSelectedArrPort(laPort);
-      }
+  // Open Edit Modal
+  const handleOpenEditModal = (voyage: VoyageRecord) => {
+    setEditingVoyage(voyage);
+    setFormVoyageNumber(voyage.voyageNumber);
+    setFormDepPortName(voyage.departurePort.name);
+    setFormDepCountry(voyage.departurePort.country);
+    setFormDepLocode(voyage.departurePort.locode);
+    setFormArrPortName(voyage.arrivalPort.name);
+    setFormArrCountry(voyage.arrivalPort.country);
+    setFormArrLocode(voyage.arrivalPort.locode);
+    setFormEtd(voyage.etd);
+    setFormAtd(voyage.atd || "");
+    setFormEta(voyage.eta);
+    setFormAta(voyage.ata || "");
+    setFormCargoType(voyage.cargoType);
+    setFormCargoQuantity(voyage.cargoQuantity);
+    setFormCargoUnit(voyage.cargoUnit || "MT");
+    setFormLoadingStatus(voyage.loadingStatus);
+    setFormDistanceNm(voyage.distanceNm);
+    setFormAvgSpeedKts(voyage.avgSpeedKts);
+    setFormStatus(voyage.status);
+    setFormMasterName(voyage.masterName || "Capt. Alexander Sterling");
+    setFormChiefOfficerName(voyage.chiefOfficerName || "Mateo Rodriguez");
+    setFormRemarks(voyage.remarks || "");
+    setFormError(null);
+    setIsFormModalOpen(true);
+  };
+
+  // Save Voyage Form Submit
+  const handleSaveVoyage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formVoyageNumber.trim()) {
+      setFormError("Voyage Number / ID is required.");
+      return;
     }
-    setSpeed(speedVal);
-    triggerNotification(`Applied preset passage: ${presetName}. Core calculations synchronized.`);
+    if (!formDepPortName.trim() || !formArrPortName.trim()) {
+      setFormError("Both Departure and Arrival Ports are required.");
+      return;
+    }
+    if (!formEtd || !formEta) {
+      setFormError("Estimated Departure (ETD) and Arrival (ETA) dates are required.");
+      return;
+    }
+
+    const depPort: PortDetails = {
+      name: formDepPortName.trim(),
+      country: formDepCountry.trim(),
+      locode: formDepLocode.trim().toUpperCase()
+    };
+
+    const arrPort: PortDetails = {
+      name: formArrPortName.trim(),
+      country: formArrCountry.trim(),
+      locode: formArrLocode.trim().toUpperCase()
+    };
+
+    const now = new Date().toISOString();
+
+    if (editingVoyage) {
+      const updatedList = voyages.map(v => {
+        if (v.id === editingVoyage.id) {
+          return {
+            ...v,
+            voyageNumber: formVoyageNumber.trim().toUpperCase(),
+            departurePort: depPort,
+            arrivalPort: arrPort,
+            etd: formEtd,
+            atd: formAtd.trim() || undefined,
+            eta: formEta,
+            ata: formAta.trim() || undefined,
+            cargoType: formCargoType.trim(),
+            cargoQuantity: Number(formCargoQuantity) || 0,
+            cargoUnit: formCargoUnit,
+            loadingStatus: formLoadingStatus,
+            distanceNm: Number(formDistanceNm) || 0,
+            avgSpeedKts: Number(formAvgSpeedKts) || 15.0,
+            status: formStatus,
+            masterName: formMasterName.trim(),
+            chiefOfficerName: formChiefOfficerName.trim(),
+            remarks: formRemarks.trim(),
+            updatedAt: now
+          };
+        }
+        return v;
+      });
+      setVoyages(updatedList);
+      triggerNotification(`✓ Voyage ${formVoyageNumber} successfully updated.`);
+    } else {
+      const newRecord: VoyageRecord = {
+        id: `voy-${Date.now()}`,
+        voyageNumber: formVoyageNumber.trim().toUpperCase(),
+        departurePort: depPort,
+        arrivalPort: arrPort,
+        etd: formEtd,
+        atd: formAtd.trim() || undefined,
+        eta: formEta,
+        ata: formAta.trim() || undefined,
+        cargoType: formCargoType.trim(),
+        cargoQuantity: Number(formCargoQuantity) || 0,
+        cargoUnit: formCargoUnit,
+        loadingStatus: formLoadingStatus,
+        distanceNm: Number(formDistanceNm) || 0,
+        avgSpeedKts: Number(formAvgSpeedKts) || 15.0,
+        status: formStatus,
+        masterName: formMasterName.trim(),
+        chiefOfficerName: formChiefOfficerName.trim(),
+        remarks: formRemarks.trim(),
+        createdAt: now,
+        updatedAt: now
+      };
+      setVoyages([newRecord, ...voyages]);
+      triggerNotification(`✓ New voyage ${formVoyageNumber} logged successfully.`);
+    }
+
+    setIsFormModalOpen(false);
+  };
+
+  // Delete Voyage
+  const confirmDeleteVoyage = () => {
+    if (!voyageToDelete) return;
+    const num = voyageToDelete.voyageNumber;
+    setVoyages(prev => prev.filter(v => v.id !== voyageToDelete.id));
+    setVoyageToDelete(null);
+    triggerNotification(`✓ Voyage ${num} deleted from history.`);
+  };
+
+  // Calendar Day Generation
+  const calendarDays = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+
+    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 is Sunday
+    // Convert so Monday is 0: (day + 6) % 7
+    const adjustedFirstDay = (firstDayIndex + 6) % 7;
+
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+    const days: Array<{
+      dateStr: string;
+      dayNumber: number;
+      isCurrentMonth: boolean;
+      isToday: boolean;
+      events: Array<{ voyage: VoyageRecord; type: "departure" | "arrival" | "transit" }>;
+    }> = [];
+
+    // Previous month padding
+    for (let i = adjustedFirstDay - 1; i >= 0; i--) {
+      const d = daysInPrevMonth - i;
+      const prevDate = new Date(year, month - 1, d);
+      const y = prevDate.getFullYear();
+      const m = String(prevDate.getMonth() + 1).padStart(2, "0");
+      const day = String(d).padStart(2, "0");
+      days.push({
+        dateStr: `${y}-${m}-${day}`,
+        dayNumber: d,
+        isCurrentMonth: false,
+        isToday: false,
+        events: []
+      });
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    // Current month days
+    for (let i = 1; i <= daysInMonth; i++) {
+      const y = year;
+      const m = String(month + 1).padStart(2, "0");
+      const d = String(i).padStart(2, "0");
+      const dateStr = `${y}-${m}-${d}`;
+
+      // Check voyage events matching this day
+      const events: Array<{ voyage: VoyageRecord; type: "departure" | "arrival" | "transit" }> = [];
+      voyages.forEach(v => {
+        const depDate = (v.atd || v.etd).split("T")[0];
+        const arrDate = (v.ata || v.eta).split("T")[0];
+
+        if (dateStr === depDate) {
+          events.push({ voyage: v, type: "departure" });
+        } else if (dateStr === arrDate) {
+          events.push({ voyage: v, type: "arrival" });
+        } else if (dateStr > depDate && dateStr < arrDate) {
+          events.push({ voyage: v, type: "transit" });
+        }
+      });
+
+      days.push({
+        dateStr,
+        dayNumber: i,
+        isCurrentMonth: true,
+        isToday: dateStr === todayStr,
+        events
+      });
+    }
+
+    // Next month padding to fill out 35 or 42 grid cells
+    const remaining = 35 - days.length > 0 ? 35 - days.length : 42 - days.length > 0 ? 42 - days.length : 0;
+    for (let i = 1; i <= remaining; i++) {
+      const nextDate = new Date(year, month + 1, i);
+      const y = nextDate.getFullYear();
+      const m = String(nextDate.getMonth() + 1).padStart(2, "0");
+      const d = String(i).padStart(2, "0");
+      days.push({
+        dateStr: `${y}-${m}-${d}`,
+        dayNumber: i,
+        isCurrentMonth: false,
+        isToday: false,
+        events: []
+      });
+    }
+
+    return days;
+  }, [calendarDate, voyages]);
+
+  const currentMonthName = useMemo(() => {
+    return calendarDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }, [calendarDate]);
+
+  // Status Badge Helper
+  const getStatusBadge = (status: VoyageStatus) => {
+    switch (status) {
+      case "In Transit":
+        return {
+          bg: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
+          dot: "bg-[#00A86B]",
+          label: "IN TRANSIT"
+        };
+      case "Completed":
+        return {
+          bg: "bg-blue-500/15 text-cyan-300 border-blue-500/40",
+          dot: "bg-[#0284C7]",
+          label: "COMPLETED"
+        };
+      case "Delayed":
+        return {
+          bg: "bg-red-500/15 text-red-400 border-red-500/40",
+          dot: "bg-red-500",
+          label: "DELAYED"
+        };
+      default:
+        return {
+          bg: "bg-amber-500/15 text-amber-300 border-amber-500/40",
+          dot: "bg-amber-400",
+          label: "PLANNED"
+        };
+    }
   };
 
   return (
-    <div id="voyage-planning-main-panel" className="space-y-8">
-      {/* Toast Notification Banner */}
-      <AnimatePresence>
-        {notification && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-4 right-4 z-50 bg-[#0A2540] text-white border-l-4 border-[#00A86B] px-4 py-3 shadow-xl flex items-center gap-3 rounded-none font-mono text-[11px] font-bold"
+    <div className="space-y-6">
+      {/* Toast Notification */}
+      {notification && (
+        <div className="fixed top-20 right-6 z-50 bg-[#0A2540] text-white border-2 border-[#00A86B] p-3.5 shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-300 font-mono text-xs">
+          <CheckCircle2 className="w-5 h-5 text-[#00A86B] shrink-0" />
+          <span>{notification}</span>
+          <button 
+            onClick={() => setNotification(null)}
+            className="text-slate-400 hover:text-white font-bold ml-2 cursor-pointer"
           >
-            <Activity className="w-4 h-4 text-[#00A86B] animate-pulse shrink-0" />
-            <span>{notification}</span>
-          </motion.div>
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* TOP HEADER & MODULE ACTION BAR */}
+      <div className="bg-white border border-slate-200 p-5 shadow-sm space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          <div>
+            <div className="flex items-center gap-2">
+              <Navigation className="w-5 h-5 text-[#00A86B]" />
+              <h2 className="text-base font-black text-[#0A2540] uppercase tracking-wide">
+                Port-to-Port Voyage Records &amp; Passage History
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Commercial voyage logbook, port schedules, cargo manifest accounting, and STCW passage tracking for <strong>{vesselName}</strong>.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => {
+                const fname = exportVoyagePlanningBackup();
+                triggerNotification(`✓ Voyage Planning data successfully backed up to Excel (${fname})`);
+              }}
+              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Backup all port voyages and history to Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+              Backup to Excel
+            </button>
+
+            <button
+              onClick={handleOpenCreateModal}
+              className="px-4 py-2 bg-[#0A2540] hover:bg-slate-800 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-[#00A86B]" />
+              Log Port-to-Port Voyage
+            </button>
+          </div>
+        </div>
+
+        {/* 3. SUMMARY CARDS AT THE TOP */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1 font-mono">
+          {/* Card 1: Total Voyages Completed */}
+          <div className="p-4 bg-slate-50 border border-slate-200 flex flex-col justify-between relative overflow-hidden">
+            <div className="flex items-center justify-between text-slate-500 text-[10px] uppercase font-bold">
+              <span>Total Voyages Completed</span>
+              <CheckCircle2 className="w-4 h-4 text-[#00A86B]" />
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-[#0A2540]">
+                {summaryStats.totalCompletedCount}
+              </span>
+              <span className="text-[10px] font-bold text-slate-400">
+                / {summaryStats.totalVoyages} Logged
+              </span>
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500 flex items-center justify-between border-t border-slate-200/60 pt-2">
+              <span>Commercial Discharge:</span>
+              <span className="font-bold text-emerald-700">100% Verified</span>
+            </div>
+          </div>
+
+          {/* Card 2: Total Distance Logged */}
+          <div className="p-4 bg-slate-50 border border-slate-200 flex flex-col justify-between relative overflow-hidden">
+            <div className="flex items-center justify-between text-slate-500 text-[10px] uppercase font-bold">
+              <span>Total Distance Logged</span>
+              <Compass className="w-4 h-4 text-blue-600" />
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-blue-900">
+                {summaryStats.totalDistanceLogged.toLocaleString()}
+              </span>
+              <span className="text-[10px] font-bold text-slate-400">NM</span>
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500 flex items-center justify-between border-t border-slate-200/60 pt-2">
+              <span>Circumnavigations:</span>
+              <span className="font-bold text-blue-700">~{(summaryStats.totalDistanceLogged / 21600).toFixed(1)}× Earth</span>
+            </div>
+          </div>
+
+          {/* Card 3: Most Frequent Ports Called */}
+          <div className="p-4 bg-slate-50 border border-slate-200 flex flex-col justify-between col-span-1 sm:col-span-2">
+            <div className="flex items-center justify-between text-slate-500 text-[10px] uppercase font-bold">
+              <span>Most Frequent Ports Called</span>
+              <Anchor className="w-4 h-4 text-slate-700" />
+            </div>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {summaryStats.mostFrequentPorts.map((p, idx) => (
+                <div key={idx} className="bg-white p-2 border border-slate-200 text-xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                    <span>Rank #{idx + 1}</span>
+                    <span className="text-emerald-700 font-extrabold">{p.count} calls</span>
+                  </div>
+                  <div className="font-extrabold text-[#0A2540] truncate mt-0.5" title={p.name}>
+                    {p.name}
+                  </div>
+                  <div className="text-[9px] text-slate-500 mt-0.5">
+                    UN/LOCODE: <strong className="text-slate-700">{p.locode}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Active In-Transit Voyage Highlight Banner (if underway) */}
+        {currentActiveVoyage && (
+          <div className="bg-[#0A2540] text-white p-4 border border-[#00A86B] flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono text-xs shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-[#00A86B] flex items-center justify-center text-white shrink-0">
+                <Ship className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/20 text-[#00A86B] border border-[#00A86B]/40 font-bold uppercase">
+                    ACTIVE VOYAGE IN TRANSIT
+                  </span>
+                  <span className="font-extrabold text-white">{currentActiveVoyage.voyageNumber}</span>
+                </div>
+                <div className="text-sm font-bold text-slate-200 mt-1 flex items-center gap-2">
+                  <span>{currentActiveVoyage.departurePort.name} ({currentActiveVoyage.departurePort.locode})</span>
+                  <ArrowRight className="w-4 h-4 text-[#00A86B]" />
+                  <span className="text-emerald-300">{currentActiveVoyage.arrivalPort.name} ({currentActiveVoyage.arrivalPort.locode})</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-6 text-[11px] border-t md:border-t-0 md:border-l border-slate-700 pt-2 md:pt-0 md:pl-4">
+              <div>
+                <span className="text-slate-400 block text-[9px] uppercase">Passage Distance</span>
+                <span className="font-bold text-white">{currentActiveVoyage.distanceNm.toLocaleString()} NM</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[9px] uppercase">Service Speed</span>
+                <span className="font-bold text-emerald-400">{currentActiveVoyage.avgSpeedKts} kts</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[9px] uppercase">ETA Destination</span>
+                <span className="font-bold text-cyan-300">{currentActiveVoyage.eta.replace("T", " ")}</span>
+              </div>
+              <button
+                onClick={() => setViewingVoyage(currentActiveVoyage)}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold uppercase text-[10px] cursor-pointer transition-colors"
+              >
+                Inspect Passage
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* VOYAGE LOGBOOK & HISTORY TABLE */}
+      <div className="bg-white border border-slate-200 shadow-sm space-y-4 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 font-mono text-xs">
+          {/* Filter Tabs */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => { setActiveFilterTab("all"); setSelectedCalendarDateStr(null); }}
+              className={`px-3 py-1.5 font-bold uppercase text-[11px] transition-colors cursor-pointer border ${
+                activeFilterTab === "all" && !selectedCalendarDateStr
+                  ? "bg-[#0A2540] text-white border-[#0A2540]"
+                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              All Voyages ({voyages.length})
+            </button>
+            <button
+              onClick={() => { setActiveFilterTab("active"); setSelectedCalendarDateStr(null); }}
+              className={`px-3 py-1.5 font-bold uppercase text-[11px] transition-colors cursor-pointer border ${
+                activeFilterTab === "active"
+                  ? "bg-emerald-700 text-white border-emerald-700"
+                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              Ongoing / Active ({summaryStats.inTransitCount})
+            </button>
+            <button
+              onClick={() => { setActiveFilterTab("upcoming"); setSelectedCalendarDateStr(null); }}
+              className={`px-3 py-1.5 font-bold uppercase text-[11px] transition-colors cursor-pointer border ${
+                activeFilterTab === "upcoming"
+                  ? "bg-amber-600 text-white border-amber-600"
+                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              Upcoming ({summaryStats.plannedCount + summaryStats.delayedCount})
+            </button>
+            <button
+              onClick={() => { setActiveFilterTab("completed"); setSelectedCalendarDateStr(null); }}
+              className={`px-3 py-1.5 font-bold uppercase text-[11px] transition-colors cursor-pointer border ${
+                activeFilterTab === "completed"
+                  ? "bg-blue-700 text-white border-blue-700"
+                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              Completed ({summaryStats.totalCompletedCount})
+            </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative min-w-[220px]">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search voyage, port, locode, cargo..."
+              className="w-full bg-slate-50 border border-slate-200 pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-[#0A2540]"
+            />
+          </div>
+        </div>
+
+        {/* Active Date Filter Notice */}
+        {selectedCalendarDateStr && (
+          <div className="bg-cyan-50 border border-cyan-200 p-2.5 flex items-center justify-between text-xs font-mono text-cyan-900">
+            <span>Filtered by calendar date: <strong>{selectedCalendarDateStr}</strong></span>
+            <button
+              onClick={() => setSelectedCalendarDateStr(null)}
+              className="text-cyan-700 hover:underline font-bold cursor-pointer"
+            >
+              Clear Date Filter
+            </button>
+          </div>
+        )}
+
+        {/* Structured Table of Port-to-Port Voyages */}
+        <div className="overflow-x-auto border border-slate-200">
+          <table className="w-full text-left font-mono text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#0A2540] text-white text-[10px] uppercase font-bold tracking-wider">
+                <th className="p-3 border-r border-slate-700">Voyage ID</th>
+                <th className="p-3 border-r border-slate-700">Status</th>
+                <th className="p-3 border-r border-slate-700">Departure Port (ETD / ATD)</th>
+                <th className="p-3 border-r border-slate-700">Arrival Port (ETA / ATA)</th>
+                <th className="p-3 border-r border-slate-700">Cargo &amp; Quantity</th>
+                <th className="p-3 border-r border-slate-700">Distance / Speed</th>
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-slate-700">
+              {filteredVoyages.map((v) => {
+                const badge = getStatusBadge(v.status);
+                const steamingHrs = v.avgSpeedKts > 0 ? (v.distanceNm / v.avgSpeedKts).toFixed(0) : "—";
+
+                return (
+                  <tr key={v.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-extrabold text-[#0A2540] border-r border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <Navigation className="w-3.5 h-3.5 text-[#00A86B]" />
+                        <span>{v.voyageNumber}</span>
+                      </div>
+                    </td>
+
+                    <td className="p-3 border-r border-slate-200">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase border ${badge.bg}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
+                        {badge.label}
+                      </span>
+                    </td>
+
+                    <td className="p-3 border-r border-slate-200">
+                      <div className="font-bold text-slate-900 flex items-center gap-1">
+                        <span>{v.departurePort.flag || "⚓"}</span>
+                        <span>{v.departurePort.name}</span>
+                        <span className="text-[10px] text-slate-400">({v.departurePort.locode})</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        ETD: {v.etd.replace("T", " ")}
+                        {v.atd && <span className="text-emerald-700 font-semibold ml-1">· ATD: {v.atd.replace("T", " ")}</span>}
+                      </div>
+                    </td>
+
+                    <td className="p-3 border-r border-slate-200">
+                      <div className="font-bold text-slate-900 flex items-center gap-1">
+                        <span>{v.arrivalPort.flag || "⚓"}</span>
+                        <span>{v.arrivalPort.name}</span>
+                        <span className="text-[10px] text-slate-400">({v.arrivalPort.locode})</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        ETA: {v.eta.replace("T", " ")}
+                        {v.ata && <span className="text-blue-700 font-semibold ml-1">· ATA: {v.ata.replace("T", " ")}</span>}
+                      </div>
+                    </td>
+
+                    <td className="p-3 border-r border-slate-200">
+                      <div className="font-semibold text-slate-800 line-clamp-1" title={v.cargoType}>
+                        {v.cargoType}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-2">
+                        <span>{v.cargoQuantity.toLocaleString()} {v.cargoUnit}</span>
+                        <span className="px-1 py-0.2 bg-slate-100 border border-slate-200 text-[9px] uppercase font-bold text-slate-600">
+                          {v.loadingStatus}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="p-3 border-r border-slate-200">
+                      <div className="font-bold text-slate-900">
+                        {v.distanceNm.toLocaleString()} NM
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        @ {v.avgSpeedKts} kts (~{steamingHrs} hrs)
+                      </div>
+                    </td>
+
+                    <td className="p-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => setViewingVoyage(v)}
+                          className="p-1.5 text-slate-600 hover:text-[#0A2540] hover:bg-slate-100 cursor-pointer"
+                          title="View Voyage Dossier"
+                        >
+                          <Navigation className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditModal(v)}
+                          className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 cursor-pointer"
+                          title="Edit Voyage Record"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setVoyageToDelete(v)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                          title="Delete Voyage"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {filteredVoyages.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-400 font-mono text-xs">
+                    No voyages found matching your query or filter criteria.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 4. INTEGRATED VOYAGE CALENDAR VIEW */}
+      <div className="bg-[#0F172A] border border-[#334155] p-5 shadow-lg space-y-4 font-mono text-white">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#334155]">
+          <div>
+            <div className="flex items-center gap-2">
+              <CalendarIcon className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                Integrated Voyage Schedule Calendar
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5">
+              Visual departure, arrival, and deep-sea transit schedules matching ETD/ATD and ETA/ATA milestones.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              onClick={() => {
+                const prev = new Date(calendarDate);
+                prev.setMonth(prev.getMonth() - 1);
+                setCalendarDate(prev);
+              }}
+              className="p-1.5 bg-[#1E293B] hover:bg-slate-700 border border-[#334155] text-white cursor-pointer"
+              title="Previous Month"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="px-3 py-1 bg-[#1E293B] border border-[#334155] font-bold text-white min-w-[130px] text-center">
+              {currentMonthName}
+            </span>
+            <button
+              onClick={() => {
+                const next = new Date(calendarDate);
+                next.setMonth(next.getMonth() + 1);
+                setCalendarDate(next);
+              }}
+              className="p-1.5 bg-[#1E293B] hover:bg-slate-700 border border-[#334155] text-white cursor-pointer"
+              title="Next Month"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setCalendarDate(new Date())}
+              className="px-2.5 py-1 bg-emerald-950 text-emerald-300 border border-emerald-500/60 font-bold uppercase text-[10px] hover:bg-emerald-900 cursor-pointer"
+            >
+              Today
+            </button>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-300">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 bg-[#00A86B] rounded-none" />
+            <span>Departure (ETD/ATD)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 bg-[#0284C7] rounded-none" />
+            <span>Arrival (ETA/ATA)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 bg-amber-500/80 rounded-none" />
+            <span>In-Transit Passage Day</span>
+          </div>
+          <div className="ml-auto text-[9px] text-slate-400">
+            Click any calendar day to filter voyages
+          </div>
+        </div>
+
+        {/* Calendar Grid */}
+        <div>
+          {/* Weekday headers */}
+          <div className="grid grid-cols-7 gap-1.5 text-center text-[10px] font-bold uppercase text-slate-400 pb-2 border-b border-[#334155]">
+            <div>Mon</div>
+            <div>Tue</div>
+            <div>Wed</div>
+            <div>Thu</div>
+            <div>Fri</div>
+            <div>Sat</div>
+            <div>Sun</div>
+          </div>
+
+          {/* Grid Cells */}
+          <div className="grid grid-cols-7 gap-1.5 pt-1 text-xs">
+            {calendarDays.map((day, idx) => {
+              const isSelected = selectedCalendarDateStr === day.dateStr;
+              const hasEvents = day.events.length > 0;
+
+              return (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedCalendarDateStr(null);
+                    } else {
+                      setSelectedCalendarDateStr(day.dateStr);
+                    }
+                  }}
+                  className={`min-h-[85px] p-2 border transition-all cursor-pointer flex flex-col justify-between relative shadow-sm ${
+                    isSelected
+                      ? "bg-[#0B2545] border-cyan-400 ring-2 ring-cyan-400/60 z-10"
+                      : day.isCurrentMonth
+                      ? "bg-[#1E293B] border-[#334155] hover:bg-[#283548] text-slate-100"
+                      : "bg-[#0B1220]/70 border-slate-900/60 text-slate-500"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[11px] font-bold ${
+                      day.isToday
+                        ? "w-5 h-5 bg-[#00A86B] text-white rounded-full flex items-center justify-center text-[10px]"
+                        : day.isCurrentMonth ? "text-white" : "text-slate-500"
+                    }`}>
+                      {day.dayNumber}
+                    </span>
+                    {hasEvents && (
+                      <span className="text-[9px] px-1 py-0.2 bg-[#0A2540] text-emerald-400 font-extrabold border border-emerald-500/40">
+                        {day.events.length}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-1 mt-1 overflow-hidden">
+                    {day.events.slice(0, 2).map((ev, eIdx) => {
+                      const isDep = ev.type === "departure";
+                      const isArr = ev.type === "arrival";
+
+                      return (
+                        <div
+                          key={eIdx}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingVoyage(ev.voyage);
+                          }}
+                          className={`text-[9px] truncate px-1 py-0.5 border font-semibold cursor-pointer ${
+                            isDep
+                              ? "bg-emerald-950 text-emerald-300 border-emerald-500"
+                              : isArr
+                              ? "bg-blue-950 text-cyan-300 border-blue-500"
+                              : "bg-slate-800 text-amber-300 border-amber-600/50"
+                          }`}
+                          title={`${ev.voyage.voyageNumber} · ${ev.type.toUpperCase()}`}
+                        >
+                          {isDep ? "🛫 " : isArr ? "⚓ " : "🚢 "}
+                          {ev.voyage.voyageNumber}
+                        </div>
+                      );
+                    })}
+                    {day.events.length > 2 && (
+                      <span className="text-[8px] text-slate-400 block font-bold">
+                        +{day.events.length - 2} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* 2. PORT-TO-PORT VOYAGE LOG FORM (CREATE / EDIT MODAL) */}
+      <AnimatePresence>
+        {isFormModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border-2 border-[#0A2540] shadow-2xl w-full max-w-2xl my-8 relative overflow-hidden font-mono text-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-[#0A2540] text-white p-4 flex items-center justify-between border-b border-slate-700">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 bg-[#00A86B] flex items-center justify-center text-white">
+                    <Navigation className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                      {editingVoyage ? `Edit Voyage: ${editingVoyage.voyageNumber}` : "Log Port-to-Port Voyage"}
+                    </h3>
+                    <p className="text-[10px] text-emerald-400 font-mono">
+                      SOLAS Chapter V Navigation &amp; Commercial Cargo Dossier
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsFormModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-1 cursor-pointer transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Form Body */}
+              <form onSubmit={handleSaveVoyage} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {formError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
+
+                {/* Row 1: Voyage ID & Status */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      Voyage Number / ID *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formVoyageNumber}
+                      onChange={(e) => setFormVoyageNumber(e.target.value)}
+                      placeholder="e.g. V.012-NORTH"
+                      className="w-full bg-slate-50 border border-slate-300 p-2 font-bold text-slate-800 uppercase focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      Voyage Status *
+                    </label>
+                    <select
+                      value={formStatus}
+                      onChange={(e) => setFormStatus(e.target.value as VoyageStatus)}
+                      className="w-full bg-slate-50 border border-slate-300 p-2 font-bold text-slate-800 focus:outline-none focus:border-[#0A2540] cursor-pointer"
+                    >
+                      <option value="Planned">Planned</option>
+                      <option value="In Transit">In Transit</option>
+                      <option value="Completed">Completed</option>
+                      <option value="Delayed">Delayed</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      Quick Port Preset
+                    </label>
+                    <select
+                      onChange={(e) => {
+                        const port = POPULAR_WORLD_PORTS.find(p => p.locode === e.target.value);
+                        if (port) {
+                          setFormArrPortName(port.name);
+                          setFormArrCountry(port.country);
+                          setFormArrLocode(port.locode);
+                        }
+                      }}
+                      className="w-full bg-slate-50 border border-slate-300 p-2 text-slate-700 focus:outline-none focus:border-[#0A2540] cursor-pointer"
+                    >
+                      <option value="">-- Quick Pick Dest. Port --</option>
+                      {POPULAR_WORLD_PORTS.map(p => (
+                        <option key={p.locode} value={p.locode}>{p.name} ({p.locode})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Row 2: Departure Port Details */}
+                <div className="p-3 bg-slate-50 border border-slate-200 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 flex items-center gap-1.5">
+                    <Anchor className="w-3.5 h-3.5 text-[#00A86B]" />
+                    Departure Port Specification
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Port Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={formDepPortName}
+                        onChange={(e) => setFormDepPortName(e.target.value)}
+                        placeholder="e.g. Port of Singapore"
+                        className="w-full bg-white border border-slate-300 p-1.5 font-semibold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Country</label>
+                      <input
+                        type="text"
+                        value={formDepCountry}
+                        onChange={(e) => setFormDepCountry(e.target.value)}
+                        placeholder="e.g. Singapore"
+                        className="w-full bg-white border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">UN/LOCODE</label>
+                      <input
+                        type="text"
+                        value={formDepLocode}
+                        onChange={(e) => setFormDepLocode(e.target.value.toUpperCase())}
+                        placeholder="e.g. SGSIN"
+                        className="w-full bg-white border border-slate-300 p-1.5 font-bold text-slate-800 uppercase focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 3: Destination Port Details */}
+                <div className="p-3 bg-slate-50 border border-slate-200 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                    Arrival / Destination Port Specification
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Port Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={formArrPortName}
+                        onChange={(e) => setFormArrPortName(e.target.value)}
+                        placeholder="e.g. Port of Tokyo"
+                        className="w-full bg-white border border-slate-300 p-1.5 font-semibold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Country</label>
+                      <input
+                        type="text"
+                        value={formArrCountry}
+                        onChange={(e) => setFormArrCountry(e.target.value)}
+                        placeholder="e.g. Japan"
+                        className="w-full bg-white border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">UN/LOCODE</label>
+                      <input
+                        type="text"
+                        value={formArrLocode}
+                        onChange={(e) => setFormArrLocode(e.target.value.toUpperCase())}
+                        placeholder="e.g. JPTYO"
+                        className="w-full bg-white border border-slate-300 p-1.5 font-bold text-slate-800 uppercase focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 4: Dates & Chronometer (ETD, ATD, ETA, ATA) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      ETD (Est. Departure) *
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={formEtd}
+                      onChange={(e) => setFormEtd(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      ATD (Actual Departure)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formAtd}
+                      onChange={(e) => setFormAtd(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      ETA (Est. Arrival) *
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={formEta}
+                      onChange={(e) => setFormEta(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      ATA (Actual Arrival)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formAta}
+                      onChange={(e) => setFormAta(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 p-1.5 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+                </div>
+
+                {/* Row 5: Cargo Details */}
+                <div className="p-3 bg-slate-50 border border-slate-200 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 flex items-center gap-1.5">
+                    <Box className="w-3.5 h-3.5 text-[#0A2540]" />
+                    Cargo Details &amp; Loading Condition
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Cargo Manifest Description</label>
+                      <input
+                        type="text"
+                        value={formCargoType}
+                        onChange={(e) => setFormCargoType(e.target.value)}
+                        placeholder="e.g. Containerized Automotive & Electronics"
+                        className="w-full bg-white border border-slate-300 p-1.5 font-semibold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Quantity &amp; Unit</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="number"
+                          value={formCargoQuantity}
+                          onChange={(e) => setFormCargoQuantity(Number(e.target.value))}
+                          className="w-full bg-white border border-slate-300 p-1.5 text-slate-800 font-bold focus:outline-none"
+                        />
+                        <select
+                          value={formCargoUnit}
+                          onChange={(e) => setFormCargoUnit(e.target.value)}
+                          className="bg-white border border-slate-300 text-xs px-1"
+                        >
+                          <option value="MT">MT</option>
+                          <option value="TEU">TEU</option>
+                          <option value="CBM">CBM</option>
+                          <option value="BBL">BBL</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase text-slate-500 mb-0.5">Loading Status</label>
+                      <select
+                        value={formLoadingStatus}
+                        onChange={(e) => setFormLoadingStatus(e.target.value as CargoLoadingStatus)}
+                        className="w-full bg-white border border-slate-300 p-1.5 text-slate-800 focus:outline-none cursor-pointer"
+                      >
+                        <option value="Loaded">Loaded</option>
+                        <option value="In Ballast">In Ballast</option>
+                        <option value="Partially Loaded">Partially Loaded</option>
+                        <option value="Loading">Loading in Port</option>
+                        <option value="Discharging">Discharging in Port</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 6: Distance & Speed */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      Total Passage Distance (Nautical Miles) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      value={formDistanceNm}
+                      onChange={(e) => setFormDistanceNm(Number(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-300 p-2 font-bold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                      Average Speed (Knots) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      required
+                      min="1"
+                      max="35"
+                      value={formAvgSpeedKts}
+                      onChange={(e) => setFormAvgSpeedKts(Number(e.target.value))}
+                      className="w-full bg-slate-50 border border-slate-300 p-2 font-bold text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                    />
+                    <span className="text-[9px] text-slate-400 mt-1 block">
+                      Steaming Est: ~{formAvgSpeedKts > 0 ? (formDistanceNm / formAvgSpeedKts).toFixed(1) : 0} hrs (~{(formDistanceNm / (formAvgSpeedKts * 24)).toFixed(1)} days)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Row 7: Remarks */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                    Operational Remarks &amp; Passage Directives
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={formRemarks}
+                    onChange={(e) => setFormRemarks(e.target.value)}
+                    placeholder="Enter weather routing, pilotage notes, canal bookings, or special navigation directives..."
+                    className="w-full bg-slate-50 border border-slate-300 p-2 text-slate-800 focus:outline-none focus:border-[#0A2540]"
+                  />
+                </div>
+
+                {/* Modal Actions */}
+                <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                  <span className="text-[9px] text-slate-400">
+                    Logged under SOLAS Chapter V Regulation 34
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsFormModalOpen(false)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-[#0A2540] hover:bg-slate-800 text-white font-bold uppercase cursor-pointer shadow flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-[#00A86B]" />
+                      Save Voyage Record
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Main Voyage Header Banner */}
-      <div className="bg-white border border-slate-200 p-5 rounded-none flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <h2 className="text-[#0A2540] font-black text-xs uppercase tracking-wider">
-              Voyage Planning & Passage Calculator
-            </h2>
-            <span className="text-[9px] font-mono bg-[#00A86B]/10 text-[#00A86B] px-2 py-0.5 border border-[#00A86B]/20 rounded-none font-bold uppercase">
-              IMO STCW COMPLIANT
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 max-w-3xl">
-            Design passage pathways in compliance with **SOLAS Chapter V Regulation 34**. Enter Sovereign State flag locations, calculate dynamic transit matrices, and adjust map zoom visualizers for general oceans, traffic schemes, channels, or docks.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs font-mono font-bold shrink-0">
-          <Compass className="w-4 h-4 text-[#00A86B] animate-spin" style={{ animationDuration: "12s" }} />
-          <span>PLANNING ENVELOPE: <span className="text-[#00A86B]">ACTIVE</span></span>
-        </div>
-      </div>
+      {/* VOYAGE DOSSIER INSPECT MODAL */}
+      <AnimatePresence>
+        {viewingVoyage && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border-2 border-[#0A2540] shadow-2xl w-full max-w-xl p-6 relative font-mono text-xs space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <Navigation className="w-5 h-5 text-[#00A86B]" />
+                  <div>
+                    <h3 className="text-sm font-black text-[#0A2540] uppercase">
+                      Voyage Dossier: {viewingVoyage.voyageNumber}
+                    </h3>
+                    <span className="text-[10px] text-slate-500">Official Shipboard Passage File</span>
+                  </div>
+                </div>
+                <button onClick={() => setViewingVoyage(null)} className="text-slate-400 hover:text-slate-800 p-1 cursor-pointer">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Side: Departure/Arrival inputs & Speed Calculator (5 Columns) */}
-        <div className="lg:col-span-5 space-y-6">
-          
-          {/* Section A: Port Departure / Arrival Registry Console */}
-          <div className="bg-white border border-slate-200 p-5 shadow-sm space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Navigation className="w-4.5 h-4.5 text-[#0A2540]" />
-                <h3 className="text-xs font-black uppercase text-[#0A2540] tracking-wider">
-                  Departure & Arrival Ports
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200">
+                <div>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Departure Port</span>
+                  <span className="font-extrabold text-[#0A2540] text-sm">
+                    {viewingVoyage.departurePort.name} ({viewingVoyage.departurePort.locode})
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">{viewingVoyage.departurePort.country}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold">Destination Port</span>
+                  <span className="font-extrabold text-[#0A2540] text-sm">
+                    {viewingVoyage.arrivalPort.name} ({viewingVoyage.arrivalPort.locode})
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">{viewingVoyage.arrivalPort.country}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="p-2 border border-slate-200 bg-white">
+                  <span className="text-[8px] uppercase text-slate-400 block font-bold">Distance</span>
+                  <span className="font-bold text-slate-900">{viewingVoyage.distanceNm.toLocaleString()} NM</span>
+                </div>
+                <div className="p-2 border border-slate-200 bg-white">
+                  <span className="text-[8px] uppercase text-slate-400 block font-bold">Avg Speed</span>
+                  <span className="font-bold text-emerald-700">{viewingVoyage.avgSpeedKts} kts</span>
+                </div>
+                <div className="p-2 border border-slate-200 bg-white">
+                  <span className="text-[8px] uppercase text-slate-400 block font-bold">Cargo</span>
+                  <span className="font-bold text-slate-900">{viewingVoyage.cargoQuantity.toLocaleString()} {viewingVoyage.cargoUnit}</span>
+                </div>
+                <div className="p-2 border border-slate-200 bg-white">
+                  <span className="text-[8px] uppercase text-slate-400 block font-bold">Condition</span>
+                  <span className="font-bold text-blue-700">{viewingVoyage.loadingStatus}</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-200 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Estimated Departure (ETD):</span>
+                  <span className="font-bold">{viewingVoyage.etd.replace("T", " ")}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Actual Departure (ATD):</span>
+                  <span className="font-bold text-emerald-700">{viewingVoyage.atd ? viewingVoyage.atd.replace("T", " ") : "Pending Departure"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Estimated Arrival (ETA):</span>
+                  <span className="font-bold text-cyan-800">{viewingVoyage.eta.replace("T", " ")}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Actual Arrival (ATA):</span>
+                  <span className="font-bold text-blue-700">{viewingVoyage.ata ? viewingVoyage.ata.replace("T", " ") : "In Passage"}</span>
+                </div>
+              </div>
+
+              {viewingVoyage.remarks && (
+                <div className="p-3 bg-white border border-slate-200">
+                  <span className="text-[9px] uppercase text-slate-400 block font-bold mb-1">Directives &amp; Remarks</span>
+                  <p className="text-xs text-slate-700 leading-relaxed font-sans">{viewingVoyage.remarks}</p>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                <button
+                  onClick={() => {
+                    const toEdit = viewingVoyage;
+                    setViewingVoyage(null);
+                    handleOpenEditModal(toEdit);
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold uppercase text-[10px] cursor-pointer"
+                >
+                  Edit Record
+                </button>
+                <button
+                  onClick={() => setViewingVoyage(null)}
+                  className="px-4 py-1.5 bg-[#0A2540] hover:bg-slate-800 text-white font-bold uppercase text-[10px] cursor-pointer"
+                >
+                  Close Dossier
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {voyageToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs font-mono text-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border-2 border-red-600 shadow-2xl w-full max-w-md p-6 relative space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 text-red-600 border-b border-slate-100 pb-3">
+                <AlertCircle className="w-6 h-6" />
+                <h3 className="font-extrabold uppercase text-sm text-[#0A2540]">
+                  Confirm Voyage Deletion
                 </h3>
               </div>
-              <span className="text-[9px] font-mono text-slate-400 font-bold uppercase">Console HUD</span>
-            </div>
-
-            {/* DEPARTURE PORT INPUT */}
-            <div className="space-y-1 relative">
-              <label className="block text-[9px] font-mono uppercase text-slate-500 font-bold tracking-wider">
-                Departure Country & Sovereign Flag
-              </label>
-              
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  id="dep-country-select-button"
-                  onClick={() => {
-                    setShowDepDropdown(!showDepDropdown);
-                    setShowArrDropdown(false);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-xs flex items-center justify-between font-bold text-slate-800 hover:bg-slate-100/80 transition-colors text-left"
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-base leading-none">{depCountry.flag}</span>
-                    <span>{depCountry.country}</span>
-                  </span>
-                  <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
-                </button>
-              </div>
-
-              {/* SEARCH DROPDOWN FOR DEPARTURE */}
-              {showDepDropdown && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-300 shadow-2xl z-50 max-h-72 flex flex-col p-2">
-                  <div className="flex items-center gap-1.5 border border-slate-200 px-2 py-1.5 mb-2 bg-slate-50">
-                    <Search className="w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      value={searchDep}
-                      onChange={(e) => setSearchDep(e.target.value)}
-                      placeholder="Search sovereign nation..."
-                      className="w-full bg-transparent border-none text-xs focus:outline-none focus:ring-0 text-slate-800 font-sans"
-                    />
-                  </div>
-                  <div className="overflow-y-auto space-y-1 flex-1 pr-1">
-                    {filteredDepNations.map((nat) => (
-                      <button
-                        key={`dep-nat-${nat.country}`}
-                        type="button"
-                        onClick={() => {
-                          setDepCountry(nat);
-                          setShowDepDropdown(false);
-                          setSearchDep("");
-                        }}
-                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-100 flex items-center justify-between font-mono"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className="text-base">{nat.flag}</span>
-                          <span className="font-bold text-[#0A2540]">{nat.country}</span>
-                        </span>
-                      </button>
-                    ))}
-                    {filteredDepNations.length === 0 && (
-                      <p className="text-[10px] text-slate-400 text-center font-mono p-2">No matching nations found.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-1.5">
-                <label className="block text-[8px] font-mono uppercase text-slate-400 tracking-wider">
-                  Departure Port Selection (Predefined)
-                </label>
-                <select
-                  value={activeDepPort.code}
-                  onChange={(e) => {
-                    const found = depPorts.find(p => p.code === e.target.value);
-                    if (found) setSelectedDepPort(found);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-slate-400 cursor-pointer rounded-none"
-                >
-                  {depPorts.map(p => (
-                    <option key={p.code} value={p.code}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-1">
-                <span>Lat: {activeDepPort.lat}</span>
-                <span>Lng: {activeDepPort.lng}</span>
-              </div>
-            </div>
-
-            <div className="flex justify-center my-1">
-              <div className="w-8 h-8 rounded-full border border-slate-200 bg-slate-50 flex items-center justify-center">
-                <ArrowRight className="w-4 h-4 text-[#00A86B]" />
-              </div>
-            </div>
-
-            {/* ARRIVAL PORT INPUT */}
-            <div className="space-y-1 relative">
-              <label className="block text-[9px] font-mono uppercase text-slate-500 font-bold tracking-wider">
-                Arrival Country & Sovereign Flag
-              </label>
-              
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  id="arr-country-select-button"
-                  onClick={() => {
-                    setShowArrDropdown(!showArrDropdown);
-                    setShowDepDropdown(false);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-xs flex items-center justify-between font-bold text-slate-800 hover:bg-slate-100/80 transition-colors text-left"
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-base leading-none">{arrCountry.flag}</span>
-                    <span>{arrCountry.country}</span>
-                  </span>
-                  <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
-                </button>
-              </div>
-
-              {/* SEARCH DROPDOWN FOR ARRIVAL */}
-              {showArrDropdown && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-300 shadow-2xl z-50 max-h-72 flex flex-col p-2">
-                  <div className="flex items-center gap-1.5 border border-slate-200 px-2 py-1.5 mb-2 bg-slate-50">
-                    <Search className="w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      value={searchArr}
-                      onChange={(e) => setSearchArr(e.target.value)}
-                      placeholder="Search sovereign nation..."
-                      className="w-full bg-transparent border-none text-xs focus:outline-none focus:ring-0 text-slate-800 font-sans"
-                    />
-                  </div>
-                  <div className="overflow-y-auto space-y-1 flex-1 pr-1">
-                    {filteredArrNations.map((nat) => (
-                      <button
-                        key={`arr-nat-${nat.country}`}
-                        type="button"
-                        onClick={() => {
-                          setArrCountry(nat);
-                          setShowArrDropdown(false);
-                          setSearchArr("");
-                        }}
-                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-100 flex items-center justify-between font-mono"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className="text-base">{nat.flag}</span>
-                          <span className="font-bold text-[#0A2540]">{nat.country}</span>
-                        </span>
-                      </button>
-                    ))}
-                    {filteredArrNations.length === 0 && (
-                      <p className="text-[10px] text-slate-400 text-center font-mono p-2">No matching nations found.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-1.5">
-                <label className="block text-[8px] font-mono uppercase text-slate-400 tracking-wider">
-                  Arrival Port Selection (Predefined)
-                </label>
-                <select
-                  value={activeArrPort.code}
-                  onChange={(e) => {
-                    const found = arrPorts.find(p => p.code === e.target.value);
-                    if (found) setSelectedArrPort(found);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-slate-400 cursor-pointer rounded-none"
-                >
-                  {arrPorts.map(p => (
-                    <option key={p.code} value={p.code}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex justify-between text-[9px] font-mono text-slate-400 mt-1">
-                <span>Lat: {activeArrPort.lat}</span>
-                <span>Lng: {activeArrPort.lng}</span>
-              </div>
-            </div>
-
-            {/* ONBOARD POSITION CALIBRATOR (MANUAL OVERRIDE) */}
-            <div className="bg-slate-50 border border-slate-200 p-3.5 space-y-3.5 rounded-none">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Sliders className="w-4 h-4 text-[#0A2540]" />
-                  <span className="text-[10px] font-black uppercase text-[#0A2540] tracking-wider">
-                    Onboard Position Calibration
-                  </span>
-                </div>
-                <span className="text-[8px] font-mono text-amber-600 bg-amber-50 px-1.5 py-0.5 border border-amber-200 font-bold uppercase">
-                  Manual Override
-                </span>
-              </div>
-
-              <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
-                Calibrate system coordinates to match local ECDIS or device positioning receivers. Passage times and route coordinates will sync upon saving.
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Are you sure you want to permanently delete voyage record <strong>{voyageToDelete.voyageNumber}</strong> ({voyageToDelete.departurePort.name} → {voyageToDelete.arrivalPort.name})? This cannot be undone.
               </p>
-
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                {/* DEPARTURE COORDINATES CALIBRATOR */}
-                <div className="space-y-1.5">
-                  <span className="block text-[8px] font-mono uppercase text-[#0A2540] font-bold tracking-wider">
-                    Departure Port Calibrator
-                  </span>
-                  <div className="space-y-1">
-                    <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-[8px] font-mono font-bold text-slate-400">LAT</span>
-                      <input
-                        type="text"
-                        disabled={isMapActivated}
-                        value={depLatInput}
-                        onChange={(e) => setDepLatInput(e.target.value)}
-                        placeholder="e.g. 01° 15.60' N"
-                        className="w-full bg-white disabled:bg-slate-100 border border-slate-200 disabled:border-slate-200 pl-8 pr-2 py-1 text-xs font-mono font-bold text-slate-800 disabled:text-slate-400 focus:outline-none focus:border-slate-400"
-                      />
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-[8px] font-mono font-bold text-slate-400">LNG</span>
-                      <input
-                        type="text"
-                        disabled={isMapActivated}
-                        value={depLngInput}
-                        onChange={(e) => setDepLngInput(e.target.value)}
-                        placeholder="e.g. 103° 50.40' E"
-                        className="w-full bg-white disabled:bg-slate-100 border border-slate-200 disabled:border-slate-200 pl-8 pr-2 py-1 text-xs font-mono font-bold text-slate-800 disabled:text-slate-400 focus:outline-none focus:border-slate-400"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* ARRIVAL COORDINATES CALIBRATOR */}
-                <div className="space-y-1.5">
-                  <span className="block text-[8px] font-mono uppercase text-[#0A2540] font-bold tracking-wider">
-                    Arrival Port Calibrator
-                  </span>
-                  <div className="space-y-1">
-                    <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-[8px] font-mono font-bold text-slate-400">LAT</span>
-                      <input
-                        type="text"
-                        disabled={isMapActivated}
-                        value={arrLatInput}
-                        onChange={(e) => setArrLatInput(e.target.value)}
-                        placeholder="e.g. 31° 13.20' N"
-                        className="w-full bg-white disabled:bg-slate-100 border border-slate-200 disabled:border-slate-200 pl-8 pr-2 py-1 text-xs font-mono font-bold text-slate-800 disabled:text-slate-400 focus:outline-none focus:border-slate-400"
-                      />
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-2 top-1.5 text-[8px] font-mono font-bold text-slate-400">LNG</span>
-                      <input
-                        type="text"
-                        disabled={isMapActivated}
-                        value={arrLngInput}
-                        onChange={(e) => setArrLngInput(e.target.value)}
-                        placeholder="e.g. 121° 28.80' E"
-                        className="w-full bg-white disabled:bg-slate-100 border border-slate-200 disabled:border-slate-200 pl-8 pr-2 py-1 text-xs font-mono font-bold text-slate-800 disabled:text-slate-400 focus:outline-none focus:border-slate-400"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {isMapActivated && (
-                <div className="flex items-center gap-1.5 bg-[#00A86B]/5 border border-[#00A86B]/20 px-2.5 py-1 text-[9px] font-mono text-[#00A86B] font-bold">
-                  <Lock className="w-3 h-3 text-[#00A86B] shrink-0" />
-                  <span>Passage Activated: Coordinates locked to avoid transit drift.</span>
-                </div>
-              )}
-            </div>
-
-            {/* DATE SELECTORS (ETD & CALCULATED ETA) */}
-            <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-100">
-              <div className="space-y-1">
-                <label className="block text-[9px] font-mono uppercase text-slate-500 font-bold tracking-wider">
-                  Departure Time (ETD)
-                </label>
-                <div className="relative">
-                  <input
-                    type="datetime-local"
-                    value={etd}
-                    onChange={(e) => setEtd(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:bg-white focus:border-slate-400 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[9px] font-mono uppercase text-slate-500 font-bold tracking-wider">
-                  Arrival Time (ETA)
-                </label>
-                <div className="bg-slate-100 border border-slate-200 px-2.5 py-2.5 text-xs text-[#0A2540] font-mono font-bold">
-                  {eta}
-                </div>
-              </div>
-            </div>
-
-            {/* SAVE VOYAGE PLAN BUTTON */}
-            <div className="pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                id="save-voyage-plan-button"
-                onClick={handleSaveVoyagePlan}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0A2540] hover:bg-[#1d3557] text-white font-mono text-xs font-bold transition-all shadow-sm border border-[#0A2540] cursor-pointer"
-              >
-                <Save className="w-4 h-4 text-[#00A86B]" />
-                <span>SAVE VOYAGE PLAN & ACTIVATE</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Section B: Speed & Time Calculator Engine */}
-          <div className="bg-white border border-slate-200 p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Gauge className="w-4.5 h-4.5 text-[#0A2540]" />
-                <h3 className="text-xs font-black uppercase text-[#0A2540] tracking-wider">
-                  Speed & Passage Calculator
-                </h3>
-              </div>
-              <span className="text-[8px] font-mono text-[#00A86B] font-bold uppercase animate-pulse">Live Calculations</span>
-            </div>
-
-            {/* Distances, speeds input fields */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="block text-[9px] font-mono uppercase text-slate-400 font-bold tracking-wider">
-                  Voyage Distance (NM) [Read-Only]
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    readOnly
-                    id="voyage-distance-input-readonly"
-                    value={isNaN(distance) ? "0" : `${distance}`}
-                    className="w-full bg-slate-100 border border-slate-200 px-3 py-2 text-xs font-mono font-bold text-slate-500 cursor-not-allowed select-none"
-                  />
-                  <span className="absolute right-3 text-[9px] font-mono font-bold text-slate-400">NM</span>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[9px] font-mono uppercase text-slate-500 font-bold tracking-wider">
-                  Recommended Speed (kts)
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="number"
-                    min="1"
-                    max="35"
-                    step="0.1"
-                    value={isNaN(speed) ? "" : speed}
-                    onChange={(e) => setSpeed(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:bg-white focus:border-slate-400"
-                  />
-                  <span className="absolute right-2.5 text-[9px] font-mono font-bold text-slate-400">KTS</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Calculations telemetry result card */}
-            <div className="bg-slate-50 border border-slate-200 p-3.5 space-y-2">
-              <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
-                <span>Passage Parameter</span>
-                <span>Computed Output</span>
-              </div>
-              
-              <div className="border-t border-slate-200/60 my-1"></div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono text-slate-600 font-medium">TOTAL TRANSIT DURATION:</span>
-                <span className="text-xs font-mono font-extrabold text-[#0A2540]">{formattedDuration}</span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono text-slate-600 font-medium">FUEL FACTOR RATING:</span>
-                <span className="text-[10px] font-mono font-bold text-slate-700">
-                  {speed > 16 ? "⚡ HIGH CONSUMPTION (SLOW STEAMING VOID)" : 
-                   speed >= 12 ? "♻️ OPTIMAL ECONOMIC CHARTER" : 
-                   speed > 0 ? "📉 SUPER SLOW STEAMING ACTIVE" : "STOPPED"}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono text-slate-600 font-medium">ESTIMATED WATER CONSUMP:</span>
-                <span className="text-[10px] font-mono font-bold text-slate-700">
-                  {isNaN(durationHours) ? "0" : (durationHours * 0.45).toFixed(1)} Metric Tons (MT)
-                </span>
-              </div>
-            </div>
-
-            {/* Common Preset Routes quick selects */}
-            <div className="space-y-1.5">
-              <span className="block text-[8px] font-mono text-slate-400 uppercase tracking-wider">Quick-Select Charter Passages</span>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
-                  type="button"
-                  onClick={() => handleApplyPreset("Singapore to Shanghai", 2250, 15.0)}
-                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 font-mono text-[9px] font-bold cursor-pointer transition-colors"
+                  onClick={() => setVoyageToDelete(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase cursor-pointer"
                 >
-                  SGP ➔ SHA (2,250 NM @ 15 kts)
+                  Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={() => handleApplyPreset("Rotterdam to New York", 3320, 16.5)}
-                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 font-mono text-[9px] font-bold cursor-pointer transition-colors"
+                  onClick={confirmDeleteVoyage}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase cursor-pointer shadow"
                 >
-                  ROT ➔ NYC (3,320 NM @ 16.5 kts)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleApplyPreset("Tokyo to Los Angeles", 4840, 14.5)}
-                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 font-mono text-[9px] font-bold cursor-pointer transition-colors"
-                >
-                  TYO ➔ LAX (4,840 NM @ 14.5 kts)
+                  Delete Voyage
                 </button>
               </div>
-            </div>
+            </motion.div>
           </div>
-        </div>
-
-        {/* Right Side: Live Voyage Route (Interactive Map) (7 Columns) */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 p-5 shadow-sm space-y-4 flex flex-col justify-between">
-          
-          {/* Header and Scale selector dropdown */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <Map className="w-4.5 h-4.5 text-[#0A2540]" />
-              <h3 className="text-xs font-black uppercase text-[#0A2540] tracking-wider">
-                Live Voyage Route
-              </h3>
-            </div>
-
-            {/* Map Scale Selector dropdown */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[9px] font-mono text-slate-400 font-black uppercase tracking-wider">SCALE MODE:</span>
-              <select
-                value={mapScale}
-                onChange={(e) => setMapScale(e.target.value as MapScale)}
-                className="bg-[#0A2540] text-white font-mono text-[10px] font-bold px-2 py-1 border border-slate-600 focus:outline-none cursor-pointer rounded-none"
-              >
-                <option value="general">🌍 General Scale (Ocean Passage)</option>
-                <option value="coastal">🗺️ Coastal Scale (Traffic Schemes)</option>
-                <option value="approach">⚓ Approach Scale (Estuary Channels)</option>
-                <option value="harbor">🏗️ Harbor Scale (Berth Mooring)</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Interactive Chart Visualizer Window */}
-          <div className="relative aspect-[16/10] bg-slate-50 overflow-hidden border border-slate-200 flex items-center justify-center w-full">
-            
-            {/* SVG Chart Plotter Engine */}
-            <svg className={`w-full h-full select-none ${!isMapActivated ? "filter grayscale blur-[1px] opacity-40" : ""}`} viewBox="0 0 800 500">
-              {/* Radar Grid and Gridlines */}
-              <defs>
-                <pattern id="radarGrid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#000000" strokeWidth="0.5" strokeOpacity="0.05" />
-                </pattern>
-                <radialGradient id="radarSweep" cx="50%" cy="50%" r="50%">
-                  <stop offset="0%" stopColor="#00A86B" stopOpacity="0.05" />
-                  <stop offset="100%" stopColor="#00A86B" stopOpacity="0" />
-                </radialGradient>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#radarGrid)" />
-
-              {/* RENDER BASED ON ACTIVE SCALE TYPE */}
-
-              {/* 1. GENERAL SCALE: Ocean Passage (Singapore to Shanghai overview) */}
-              {mapScale === "general" && (
-                <g>
-                  {/* Dynamic Sea Background Tint */}
-                  <rect width="100%" height="100%" fill="#bae6fd" opacity="0.3" />
-                  
-                  {/* Landmass 1: Malacca Peninsula & Indonesia (Bottom Left) */}
-                  <path d="M 0 450 Q 80 430 110 380 T 140 320 L 0 300 Z" fill="#cbd5e1" stroke="#64748b" strokeWidth="1.5" />
-                  <text x="35" y="400" fill="#334155" className="font-mono text-[9px] font-bold">MALAYSIA</text>
-                  <text x="40" y="445" fill="#047857" className="font-mono text-[10px] font-black">SINGAPORE {depCountry.flag}</text>
- 
-                  {/* Landmass 2: Vietnam/Indochina Coastline (Left Center) */}
-                  <path d="M 0 250 Q 90 200 130 150 T 80 80 L 0 50 Z" fill="#cbd5e1" stroke="#64748b" strokeWidth="1.5" />
-                  <text x="30" y="170" fill="#334155" className="font-mono text-[9px] font-bold">VIETNAM</text>
- 
-                  {/* Landmass 3: China & Shanghai Coastline (Top Right) */}
-                  <path d="M 450 0 Q 520 80 570 120 T 680 140 T 800 120 L 800 0 Z" fill="#cbd5e1" stroke="#64748b" strokeWidth="1.5" />
-                  <text x="630" y="60" fill="#334155" className="font-mono text-[9px] font-bold">CHINA</text>
-                  <text x="590" y="110" fill="#047857" className="font-mono text-[10px] font-black">SHANGHAI {arrCountry.flag}</text>
- 
-                  {/* Landmass 4: Philippines Islands (Bottom Right) */}
-                  <path d="M 700 380 Q 750 350 780 400 L 800 480 L 680 480 Z" fill="#cbd5e1" stroke="#64748b" strokeWidth="1" />
-                  <text x="710" y="440" fill="#475569" className="font-mono text-[9px] font-bold">PHILIPPINES</text>
- 
-                  {/* Great Circle Navigation Route Line */}
-                  <path 
-                    id="oceanRoute" 
-                    d="M 120 370 Q 240 280 400 240 T 610 130" 
-                    fill="none" 
-                    stroke="#047857" 
-                    strokeWidth="3" 
-                    strokeDasharray="6,4" 
-                    opacity="0.9" 
-                  />
- 
-                  {/* Ocean Current vectors */}
-                  <path d="M 280 340 L 320 310" fill="none" stroke="#0284c7" strokeWidth="1" markerEnd="url(#arrow)" opacity="0.5" />
-                  <path d="M 290 350 L 330 320" fill="none" stroke="#0284c7" strokeWidth="1" markerEnd="url(#arrow)" opacity="0.5" />
-                  <text x="310" y="355" fill="#0284c7" className="font-mono text-[8px] font-bold">S.C.S. CURRENT 1.4 KTS</text>
- 
-                  {/* Waypoint Markers */}
-                  <circle cx="120" cy="370" r="4.5" fill="#047857" />
-                  <text x="130" y="375" fill="#0f172a" className="font-mono text-[9px] font-black">DEP: {activeDepPort.code}</text>
- 
-                  <circle cx="310" cy="255" r="3.5" fill="#b45309" />
-                  <text x="320" y="258" fill="#b45309" className="font-mono text-[8px] font-black">WP 1 (PARACEL)</text>
- 
-                  <circle cx="480" cy="195" r="3.5" fill="#b45309" />
-                  <text x="490" y="198" fill="#b45309" className="font-mono text-[8px] font-black">WP 2 (TAIWAN ST.)</text>
- 
-                  <circle cx="610" cy="130" r="4.5" fill="#047857" />
-                  <text x="590" y="150" fill="#0f172a" className="font-mono text-[9px] font-black">ARR: {activeArrPort.code}</text>
- 
-                  {/* Animated Ship Position Indicator */}
-                  {(() => {
-                    const t = simProgress / 100;
-                    const x = (1 - t) * (1 - t) * 120 + 2 * (1 - t) * t * 290 + t * t * 610;
-                    const y = (1 - t) * (1 - t) * 370 + 2 * (1 - t) * t * 220 + t * t * 130;
-                    return (
-                      <g transform={`translate(${x}, ${y})`}>
-                        <circle r="16" fill="#047857" fillOpacity="0.15" className="animate-ping" />
-                        <rect x="-8" y="-4" width="16" height="8" rx="1.5" fill="#047857" stroke="#ffffff" strokeWidth="1" transform="rotate(-22)" />
-                        <polygon points="0,-7 6,-4 0,-1" fill="#ffffff" transform="rotate(-22)" />
-                        <text x="12" y="4" fill="#0f172a" className="font-mono text-[9px] font-black">
-                          {vesselName} ({speed} kts)
-                        </text>
-                      </g>
-                    );
-                  })()}
- 
-                  {/* Device GPS Position Anchor */}
-                  {isMapActivated && (
-                    <g transform="translate(180, 310)">
-                      <circle r="12" fill="#0284c7" fillOpacity="0.15" className="animate-ping" />
-                      <circle cx="0" cy="0" r="4" fill="#0284c7" stroke="#ffffff" strokeWidth="1" />
-                      <line x1="-8" y1="0" x2="8" y2="0" stroke="#0284c7" strokeWidth="0.8" />
-                      <line x1="0" y1="-8" x2="0" y2="8" stroke="#0284c7" strokeWidth="0.8" />
-                      <text x="10" y="3" fill="#0284c7" className="font-mono text-[8px] font-black uppercase tracking-wider drop-shadow-sm">
-                        Current Vessel Position (GPS Anchor: {gpsAnchor.lat}, {gpsAnchor.lng})
-                      </text>
-                    </g>
-                  )}
- 
-                  {/* Dynamic Sea Depth contour references */}
-                  <text x="420" y="320" fill="#1e293b" className="font-mono text-[24px] font-extrabold" opacity="0.1">PACIFIC OCEAN PASSAGE</text>
-                  <text x="420" y="340" fill="#1e293b" className="font-mono text-[10px]" opacity="0.2">Average Depth: 3,400 meters</text>
-                </g>
-              )}
-
-              {/* 2. COASTAL SCALE: Near shoreline and major Traffic Separation Schemes (TSS) */}
-              {mapScale === "coastal" && (
-                <g>
-                  {/* Depth Color Gradients */}
-                  <rect width="100%" height="100%" fill="#e0f2fe" />
-                  
-                  {/* Shallow water areas */}
-                  <path d="M 0 0 L 250 0 L 210 180 Q 150 250 80 290 L 0 310 Z" fill="#bae6fd" />
-                  <path d="M 0 0 L 150 0 Q 110 120 40 180 L 0 190 Z" fill="#7dd3fc" />
-                  
-                  {/* Shallow Warning lines */}
-                  <path d="M 210 180 Q 150 250 80 290" fill="none" stroke="#be123c" strokeWidth="1.5" strokeDasharray="4,4" />
-                  <text x="120" y="220" fill="#be123c" className="font-mono text-[8px] font-black" transform="rotate(30, 120, 220)">10m DEPTH CONTOUR (RESTRICTED)</text>
-                  <text x="190" y="100" fill="#334155" className="font-mono text-[8px] font-black">30m DEPTH LIMIT</text>
-                  <text x="350" y="320" fill="#475569" className="font-mono text-[8px] font-black">80m SAFE WATER ZONE</text>
-
-                  {/* Shoreline landmass */}
-                  <path d="M 0 0 L 120 0 L 90 80 Q 40 120 0 130 Z" fill="#94a3b8" stroke="#475569" strokeWidth="2" />
-                  <text x="15" y="40" fill="#0f172a" className="font-mono text-[9px] font-black uppercase">COASTAL RANGE</text>
-
-                  {/* Lighthouse and Warning Beam */}
-                  <g transform="translate(85, 60)">
-                    <polygon points="0,0 -8,25 8,25" fill="#ca8a04" stroke="#0f172a" strokeWidth="0.5" />
-                    <path d="M 0 0 L 180 -15 A 60 60 0 0 1 190 20 Z" fill="#eab308" fillOpacity="0.25" />
-                    <circle cx="0" cy="0" r="3" fill="#ef4444" className="animate-ping" />
-                    <text x="10" y="5" fill="#b45309" className="font-mono text-[7px] font-black">HORSBURGH LT (FL.10s)</text>
-                  </g>
-
-                  {/* TSS (Traffic Separation Scheme) Lanes */}
-                  {/* Westbound Lane */}
-                  <rect x="250" y="240" width="550" height="40" fill="#f1f5f9" fillOpacity="0.8" />
-                  <path d="M 250 260 L 800 260" fill="none" stroke="#7e22ce" strokeWidth="1.5" strokeDasharray="6,4" />
-                  <text x="400" y="255" fill="#7e22ce" className="font-mono text-[9px] font-black tracking-wider">WESTBOUND TSS LANE ➔</text>
-                  
-                  {/* Separation Zone */}
-                  <rect x="250" y="280" width="550" height="20" fill="#fecdd3" fillOpacity="0.5" />
-                  <line x1="250" y1="290" x2="800" y2="290" stroke="#be123c" strokeWidth="2" strokeDasharray="10,6" />
-                  <text x="430" y="293" fill="#be123c" className="font-mono text-[8px] font-black tracking-widest uppercase">TSS SEPARATION ZONE (NO MOORING)</text>
-
-                  {/* Eastbound Lane */}
-                  <rect x="250" y="300" width="550" height="40" fill="#f1f5f9" fillOpacity="0.8" />
-                  <path d="M 250 320 L 800 320" fill="none" stroke="#7e22ce" strokeWidth="1.5" strokeDasharray="6,4" />
-                  <text x="400" y="335" fill="#7e22ce" className="font-mono text-[9px] font-black tracking-wider">◀ EASTBOUND TSS LANE</text>
-
-                  {/* Ship's planned line */}
-                  <path d="M 750 320 L 300 320" fill="none" stroke="#047857" strokeWidth="2.5" markerEnd="url(#arrow)" />
-
-                  {/* Ship's animation indicator */}
-                  {(() => {
-                    const progressFactor = simProgress / 100;
-                    const shipX = 750 - progressFactor * 450;
-                    return (
-                      <g transform={`translate(${shipX}, 320)`}>
-                        <rect x="-10" y="-5" width="20" height="10" rx="1" fill="#047857" stroke="#ffffff" strokeWidth="1" />
-                        <polygon points="10,0 4,-4 4,4" fill="#ffffff" />
-                        <text x="-15" y="-12" fill="#047857" className="font-mono text-[9px] font-black">
-                          {vesselName} ({speed} kts)
-                        </text>
-                        {/* Heading indicator */}
-                        <line x1="10" y1="0" x2="30" y2="0" stroke="#047857" strokeWidth="1.5" strokeDasharray="2,2" />
-                      </g>
-                    );
-                  })()}
-
-                  {/* Device GPS Position Anchor */}
-                  {isMapActivated && (
-                    <g transform="translate(320, 380)">
-                      <circle r="12" fill="#0284c7" fillOpacity="0.15" className="animate-ping" />
-                      <circle cx="0" cy="0" r="4" fill="#0284c7" stroke="#ffffff" strokeWidth="1" />
-                      <line x1="-8" y1="0" x2="8" y2="0" stroke="#0284c7" strokeWidth="0.8" />
-                      <line x1="0" y1="-8" x2="0" y2="8" stroke="#0284c7" strokeWidth="0.8" />
-                      <text x="10" y="3" fill="#0284c7" className="font-mono text-[8px] font-black uppercase tracking-wider drop-shadow-sm">
-                        Current Vessel Position (GPS Anchor: {gpsAnchor.lat}, {gpsAnchor.lng})
-                      </text>
-                    </g>
-                  )}
-
-                  {/* Target vessel traffic (Simulated other ships) */}
-                  <g transform="translate(380, 260)">
-                    <rect x="-8" y="-4" width="16" height="8" rx="1" fill="#b91c1c" />
-                    <text x="-10" y="16" fill="#b91c1c" className="font-mono text-[8px] font-black">⚠️ COSCO SHIPPING (12 kts)</text>
-                    <polygon points="-8,0 -2,-3 -2,3" fill="#ffffff" />
-                  </g>
-                  <g transform="translate(620, 260)">
-                    <rect x="-8" y="-4" width="16" height="8" rx="1" fill="#b91c1c" />
-                    <text x="-10" y="-10" fill="#b91c1c" className="font-mono text-[8px] font-black">⚠️ NYK PROSPER (18 kts)</text>
-                    <polygon points="-8,0 -2,-3 -2,3" fill="#ffffff" />
-                  </g>
-
-                  {/* Depth gauge readings */}
-                  <text x="350" y="450" fill="#334155" className="font-mono text-[9px] font-bold">RADAR ACTIVE SWEEP: 12 NM RANGE</text>
-                  <circle cx="400" cy="400" r="100" fill="none" stroke="#047857" strokeWidth="1" strokeOpacity="0.15" />
-                  <line x1="400" y1="400" x2="480" y2="340" stroke="#047857" strokeWidth="1.5" strokeOpacity="0.5" className="animate-pulse" />
-                </g>
-              )}
-
-              {/* 3. APPROACH SCALE: Entrance channel & Pilot Boarding area */}
-              {mapScale === "approach" && (
-                <g>
-                  {/* Sea bed representation */}
-                  <rect width="100%" height="100%" fill="#e0f2fe" />
-                  
-                  {/* Channel Dredged Limits */}
-                  <polygon points="100,500 250,0 350,0 200,500" fill="#bae6fd" />
-                  <line x1="100" y1="500" x2="250" y2="0" stroke="#475569" strokeWidth="1.5" strokeDasharray="5,5" />
-                  <line x1="200" y1="500" x2="350" y2="0" stroke="#475569" strokeWidth="1.5" strokeDasharray="5,5" />
-                  <text x="140" y="120" fill="#0369a1" className="font-mono text-[9px] font-black" transform="rotate(-73, 140, 120)">DREDGED ENTRY CHANNEL (15.5M DEPTH)</text>
-
-                  {/* Red/Green Lateral Buoys */}
-                  <g transform="translate(195, 350)">
-                    <polygon points="0,-8 -6,4 6,4" fill="#ef4444" />
-                    <circle cx="0" cy="-8" r="2.5" fill="#ef4444" className="animate-ping" />
-                    <text x="10" y="4" fill="#b91c1c" className="font-mono text-[8px] font-black">PORT Q1 (FL.R.2s)</text>
-                  </g>
-                  <g transform="translate(290, 320)">
-                    <polygon points="0,-8 -6,4 6,4" fill="#22c55e" />
-                    <circle cx="0" cy="-8" r="2.5" fill="#22c55e" className="animate-ping" />
-                    <text x="10" y="4" fill="#15803d" className="font-mono text-[8px] font-black">STBD Q2 (FL.G.2s)</text>
-                  </g>
-
-                  <g transform="translate(135, 150)">
-                    <polygon points="0,-8 -6,4 6,4" fill="#ef4444" />
-                    <circle cx="0" cy="-8" r="2.5" fill="#ef4444" className="animate-ping" />
-                    <text x="-75" y="4" fill="#b91c1c" className="font-mono text-[8px] font-black">PORT Q3 (FL.R.4s)</text>
-                  </g>
-                  <g transform="translate(230, 120)">
-                    <polygon points="0,-8 -6,4 6,4" fill="#22c55e" />
-                    <circle cx="0" cy="-8" r="2.5" fill="#22c55e" className="animate-ping" />
-                    <text x="10" y="4" fill="#15803d" className="font-mono text-[8px] font-black">STBD Q4 (FL.G.4s)</text>
-                  </g>
-
-                  {/* Pilot Boarding Anchorage Station */}
-                  <g transform="translate(500, 220)">
-                    <circle cx="0" cy="0" r="30" fill="none" stroke="#b45309" strokeWidth="1.5" strokeDasharray="4,4" />
-                    <circle cx="0" cy="0" r="3" fill="#b45309" />
-                    {/* Tiny Anchor SVG */}
-                    <path d="M -5 -5 L 5 -5 M 0 -5 L 0 8 M -6 4 A 6 6 0 0 0 6 4" fill="none" stroke="#b45309" strokeWidth="1.5" />
-                    <text x="35" y="5" fill="#b45309" className="font-mono text-[9px] font-black uppercase">PILOT MEETING AREA (No.1)</text>
-                    <text x="35" y="16" fill="#475569" className="font-mono text-[8px] font-bold">Channel VHF Ch: 12 / 16</text>
-                  </g>
-
-                  {/* Soundings (depth numbers in meters) */}
-                  <text x="80" y="280" fill="#334155" className="font-mono text-[10px] font-black italic">11.8</text>
-                  <text x="410" y="110" fill="#334155" className="font-mono text-[10px] font-black italic">13.2</text>
-                  <text x="450" y="380" fill="#334155" className="font-mono text-[10px] font-black italic">14.5</text>
-                  <text x="600" y="80" fill="#334155" className="font-mono text-[10px] font-black italic">16.1</text>
-                  <text x="650" y="330" fill="#334155" className="font-mono text-[10px] font-black italic">15.8</text>
-
-                  {/* Tidal Vectors */}
-                  <path d="M 520 380 L 460 410" fill="none" stroke="#0284c7" strokeWidth="1.5" markerEnd="url(#arrow)" />
-                  <text x="500" y="425" fill="#0284c7" className="font-mono text-[8px] font-bold">EBB TIDE: 1.8 KTS 220°</text>
-
-                  {/* Path of ship */}
-                  <path d="M 150 480 L 265 100" fill="none" stroke="#047857" strokeWidth="2" strokeDasharray="4,4" />
-
-                  {/* Ship's navigation along approach */}
-                  {(() => {
-                    const factor = simProgress / 100;
-                    const shipX = 150 + factor * 115;
-                    const shipY = 480 - factor * 380;
-                    return (
-                      <g transform={`translate(${shipX}, ${shipY})`}>
-                        <rect x="-8" y="-14" width="16" height="28" rx="2" fill="#047857" stroke="#ffffff" strokeWidth="1" transform="rotate(18)" />
-                        <polygon points="0,-16 4,-12 -4,-12" fill="#ffffff" transform="rotate(18)" />
-                        <text x="14" y="4" fill="#047857" className="font-mono text-[9px] font-black">
-                          {vesselName}
-                        </text>
-                        <text x="14" y="14" fill="#334155" className="font-mono text-[7px] font-bold">
-                          COG: 018° / SOG: 8.5kts
-                        </text>
-                      </g>
-                    );
-                  })()}
-
-                  {/* Device GPS Position Anchor */}
-                  {isMapActivated && (
-                    <g transform="translate(400, 150)">
-                      <circle r="12" fill="#0284c7" fillOpacity="0.15" className="animate-ping" />
-                      <circle cx="0" cy="0" r="4" fill="#0284c7" stroke="#ffffff" strokeWidth="1" />
-                      <line x1="-8" y1="0" x2="8" y2="0" stroke="#0284c7" strokeWidth="0.8" />
-                      <line x1="0" y1="-8" x2="0" y2="8" stroke="#0284c7" strokeWidth="0.8" />
-                      <text x="10" y="3" fill="#0284c7" className="font-mono text-[8px] font-black uppercase tracking-wider drop-shadow-md">
-                        Current Vessel Position (GPS Anchor: {gpsAnchor.lat}, {gpsAnchor.lng})
-                      </text>
-                    </g>
-                  )}
-                </g>
-              )}
-
-              {/* 4. HARBOR SCALE: Mooring berth & dock terminal layout */}
-              {mapScale === "harbor" && (
-                <g>
-                  {/* Harbor Basin Dark Water */}
-                  <rect width="100%" height="100%" fill="#e0f2fe" />
-                  
-                  {/* Concrete Jetty / Quay Dock Layout (Right side) */}
-                  <polygon points="400,0 800,0 800,500 400,500 400,420 450,400 450,100 400,80" fill="#64748b" stroke="#334155" strokeWidth="3" />
-                  
-                  {/* Berth Markings and Mooring Bollards */}
-                  <line x1="450" y1="100" x2="450" y2="400" stroke="#ca8a04" strokeWidth="2.5" strokeDasharray="8,4" />
-                  <text x="480" y="240" fill="#0f172a" className="font-mono text-[11px] font-black tracking-widest" transform="rotate(90, 480, 240)">CONTAINER TERMINAL BERTH NO. 4</text>
-
-                  {/* Bollards represented by red dots on the quay */}
-                  {[120, 160, 200, 240, 280, 320, 360, 380].map((by, bIdx) => (
-                    <g key={`bol-${bIdx}`} transform={`translate(452, ${by})`}>
-                      <circle cx="0" cy="0" r="3.5" fill="#ef4444" />
-                      <text x="8" y="3" fill="#0f172a" className="font-mono text-[8px] font-black">B{bIdx + 1}</text>
-                    </g>
-                  ))}
-
-                  {/* Container Cranes along the dock quay */}
-                  {[100, 200, 300].map((cy, cIdx) => (
-                    <g key={`crane-${cIdx}`} transform={`translate(520, ${cy})`}>
-                      <rect x="-10" y="-15" width="20" height="30" fill="#334155" stroke="#eab308" strokeWidth="1" />
-                      <line x1="-10" y1="0" x2="-60" y2="0" stroke="#eab308" strokeWidth="2" />
-                      <circle cx="0" cy="0" r="3.5" fill="#eab308" />
-                      <text x="14" y="4" fill="#ca8a04" className="font-mono text-[8px] font-black">QC-0{cIdx + 1}</text>
-                    </g>
-                  ))}
-
-                  {/* Safe Basin Depth Limits */}
-                  <text x="100" y="80" fill="#1e293b" className="font-mono text-[10px] font-black">HARBOR CHANNEL DEPTH: 16.5M CD</text>
-                  <text x="100" y="100" fill="#334155" className="font-mono text-[9px] font-bold">Docking limit: 110,000 DWT vessels</text>
-
-                  {/* Tugboat assisting stern */}
-                  <g transform="translate(180, 360)">
-                    <rect x="-15" y="-8" width="30" height="16" rx="4" fill="#b91c1c" stroke="#ffffff" strokeWidth="0.5" />
-                    <path d="M 15 0 C 15 0 25 -10 25 10 Z" fill="#0284c7" fillOpacity="0.2" />
-                    <text x="-25" y="-12" fill="#b91c1c" className="font-mono text-[8px] font-black">⚓ TUG RESOLUTE</text>
-                    <text x="-25" y="18" fill="#334155" className="font-mono text-[7px] font-bold">Pushing stern (50% power)</text>
-                  </g>
-
-                  {/* Ship berthing/maneuvering dynamically */}
-                  {(() => {
-                    const factor = simProgress / 100;
-                    const shipX = 160 + factor * 180;
-                    const shipY = 280 - factor * 30;
-                    return (
-                      <g transform={`translate(${shipX}, ${shipY})`}>
-                        {factor > 0.8 && (
-                          <g>
-                            <line x1="0" y1="-30" x2="90" y2="-100" stroke="#475569" strokeWidth="1" strokeDasharray="2,1" />
-                            <line x1="0" y1="30" x2="90" y2="100" stroke="#475569" strokeWidth="1" strokeDasharray="2,1" />
-                            <text x="-60" y="-35" fill="#047857" className="font-mono text-[8px] font-black uppercase">Mooring Lines Secured</text>
-                          </g>
-                        )}
-
-                        <rect x="-16" y="-45" width="32" height="90" rx="4" fill="#047857" stroke="#ffffff" strokeWidth="1.5" transform="rotate(0)" />
-                        <polygon points="0,-52 16,-40 -16,-40" fill="#ffffff" />
-                        
-                        <rect x="-10" y="-25" width="20" height="60" fill="#0c1d3a" opacity="0.3" />
-                        
-                        <text x="-45" y="4" fill="#047857" className="font-mono text-[9px] font-black bg-white/90 border border-slate-200 px-1 rounded-sm">
-                          {vesselName}
-                        </text>
-                        <text x="-45" y="14" fill="#334155" className="font-mono text-[7px] font-bold">
-                          DIST TO QUAY: {Math.max(0, Math.round(90 - factor * 90))}m
-                        </text>
-                      </g>
-                    );
-                  })()}
-
-                  {/* Device GPS Position Anchor */}
-                  {isMapActivated && (
-                    <g transform="translate(250, 420)">
-                      <circle r="12" fill="#0284c7" fillOpacity="0.15" className="animate-ping" />
-                      <circle cx="0" cy="0" r="4" fill="#0284c7" stroke="#ffffff" strokeWidth="1" />
-                      <line x1="-8" y1="0" x2="8" y2="0" stroke="#0284c7" strokeWidth="0.8" />
-                      <line x1="0" y1="-8" x2="0" y2="8" stroke="#0284c7" strokeWidth="0.8" />
-                      <text x="10" y="3" fill="#0284c7" className="font-mono text-[8px] font-black uppercase tracking-wider drop-shadow-md">
-                        Current Vessel Position (GPS Anchor: {gpsAnchor.lat}, {gpsAnchor.lng})
-                      </text>
-                    </g>
-                  )}
-
-                  {/* Breakwater defenses */}
-                  <polygon points="0,480 300,480 270,500 0,500" fill="#475569" />
-                  <text x="10" y="495" fill="#cbd5e1" className="font-mono text-[8px] font-bold">OUTER BASIN BREAKWATER</text>
-                </g>
-              )}
-            </svg>
-
-            {/* Scale-Specific Informational Badges overlay */}
-            <div className="absolute bottom-3 left-3 bg-slate-900/90 border border-slate-700 p-2.5 space-y-1 text-[9px] font-mono select-none">
-              <div className="text-white font-extrabold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-[#00A86B] rounded-full animate-ping"></span>
-                <span>CHART TELEMETRY:</span>
-              </div>
-              <div className="text-slate-400">
-                {mapScale === "general" && (
-                  <div>
-                    <p>Range: <span className="text-white">GENERAL OCEANIC</span></p>
-                    <p>Zoom: <span className="text-white">1:5,500,000</span></p>
-                    <p>Safe Depth: <span className="text-white">&gt; 500m</span></p>
-                  </div>
-                )}
-                {mapScale === "coastal" && (
-                  <div>
-                    <p>Range: <span className="text-white">TRAFFIC SCHEMES (TSS)</span></p>
-                    <p>Zoom: <span className="text-white">1:450,000</span></p>
-                    <p>Contour Limit: <span className="text-[#f43f5e] font-bold">10m Danger Line</span></p>
-                  </div>
-                )}
-                {mapScale === "approach" && (
-                  <div>
-                    <p>Range: <span className="text-white">ESTUARY / CHANNELS</span></p>
-                    <p>Zoom: <span className="text-white">1:45,000</span></p>
-                    <p>Active Tide: <span className="text-sky-400 font-bold">Ebb 1.8 kts</span></p>
-                  </div>
-                )}
-                {mapScale === "harbor" && (
-                  <div>
-                    <p>Range: <span className="text-white">BERTH #4 TERMINAL</span></p>
-                    <p>Zoom: <span className="text-white">1:1,500</span></p>
-                    <p>Bollard Pull: <span className="text-white">80T Nominal</span></p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Animation Progress Slider overlay */}
-            <div className="absolute top-3 right-3 bg-slate-900/90 border border-slate-700 px-3 py-2 flex items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isMapActivated) setIsPlaying(!isPlaying);
-                }}
-                disabled={!isMapActivated}
-                className={`p-1 text-white rounded-sm ${isMapActivated ? "bg-[#00A86B] hover:bg-emerald-700 cursor-pointer" : "bg-slate-700 opacity-50 cursor-not-allowed"}`}
-                title={isPlaying ? "Pause Simulation" : "Play Route Simulation"}
-              >
-                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (isMapActivated) {
-                    setSimProgress(0);
-                    setIsPlaying(false);
-                  }
-                }}
-                disabled={!isMapActivated}
-                className={`p-1 text-white rounded-sm ${isMapActivated ? "bg-slate-700 hover:bg-slate-600 cursor-pointer" : "bg-slate-700 opacity-50 cursor-not-allowed"}`}
-                title="Reset Position"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-              <div className="flex flex-col">
-                <span className="text-[7px] font-mono text-slate-400 font-bold uppercase leading-none mb-1">Passage progress</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    disabled={!isMapActivated}
-                    value={simProgress}
-                    onChange={(e) => setSimProgress(parseInt(e.target.value))}
-                    className="w-24 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-[#00A86B]"
-                  />
-                  <span className="text-[9px] font-mono text-white font-bold min-w-[25px] text-right">{simProgress}%</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Map Activation Gate Overlay */}
-            {!isMapActivated && (
-              <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-[3px] z-30 flex flex-col items-center justify-center p-6 text-center select-none">
-                <div className="w-12 h-12 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center mb-4 text-[#f43f5e] animate-pulse">
-                  <Lock className="w-5 h-5" />
-                </div>
-                <h4 className="text-white font-mono text-xs font-black uppercase tracking-widest mb-2">
-                  Live Route Map inactive until Voyage Plan is Saved.
-                </h4>
-                <p className="text-slate-400 text-[10px] max-w-sm leading-normal">
-                  Configure your Departure Country, Arrival Country, recommended transit speeds, and click "SAVE VOYAGE PLAN & ACTIVATE" to unlock maritime charts, TSS routes, and live vessel simulations.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Bottom Info details about voyage routing */}
-          <div className="bg-slate-50 border border-slate-200 p-4 space-y-2">
-            <h4 className="text-[10px] font-mono font-black text-[#0A2540] uppercase tracking-wider flex items-center gap-1">
-              <Info className="w-3.5 h-3.5 text-[#00A86B]" />
-              <span>Route Planning Guidance Notice</span>
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-normal">
-              You are viewing the simulated passage from <span className="font-bold text-[#0A2540]">{depCountry.country} ({activeDepPort.name})</span> to <span className="font-bold text-[#0A2540]">{arrCountry.country} ({activeArrPort.name})</span>. Switching scales will reveal specialized navigational elements: TSS lanes for ocean coastal limits, lateral buoyage for narrow approach fairways, and mooring line arrangements alongside the concrete quay terminal berths.
-            </p>
-          </div>
-        </div>
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

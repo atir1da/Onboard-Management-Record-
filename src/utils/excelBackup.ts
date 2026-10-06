@@ -618,63 +618,141 @@ export function exportCadetTasksBackup(customOpts?: ExportOptions): string {
 }
 
 /**
- * 6. VOYAGE PLANNING BACKUP
+ * 6. VOYAGE PLANNING BACKUP (Port-to-Port Voyage Records & History)
  */
 export function exportVoyagePlanningBackup(customOpts?: ExportOptions): string {
   const meta = getSystemMetadata(customOpts);
   const wb = XLSX.utils.book_new();
 
-  const overviewRows: (string | number)[][] = [
-    ...createHeaderBlock("Passage Plan & Voyage Navigation Parameters", meta),
-    ["PARAMETER", "DETAILS", "UNIT / SPECIFICATION", "COMPLIANCE CHECK"],
-    ["Voyage Designation", "Voyage No. 26-09 Trans-Pacific", "Official Passage ID", "Approved by Master"],
-    ["Departure Port", "Port of Los Angeles (USLAX)", "United States", "Pilot Disembarked"],
-    ["Destination Port", "Port of Tokyo (JPTYO)", "Japan", "Berth Allocated"],
-    ["Passage Total Distance", 4820, "Nautical Miles (NM)", "Great Circle & Rhumb Line Optimized"],
-    ["Design Service Speed", 15.8, "Knots", "Economic Steaming Speed"],
-    ["Estimated Time Enroute (ETE)", "12.7 Days (305 Hours)", "Sea Passage Hours", "Weather Routing Applied"],
-    ["Departure Date & Time", "2026-09-25 08:00 UTC", "UTC Chronometer", "Recorded in ECDIS Log"],
-    ["Estimated Time of Arrival (ETA)", "2026-10-08 01:00 UTC", "UTC Chronometer", "Notified to Agent"],
-    ["Estimated Bunker Consumption", 578.5, "Metric Tons (VLSFO)", "Safety Margin 15% Included"],
-    ["Minimum Required UKC", 2.5, "Meters", "Under-Keel Clearance Limit Met"],
-    ["Security Level Enroute", "ISPS Level 1 (Normal)", "Ship Security Plan", "Citadel Pre-Inspected"],
-    ["ECDIS Navigation System", "Dual ECDIS Type-Approved", "ENC Vector Charts Updated", "Permits Valid to End of Year"]
-  ];
+  // Retrieve stored voyages or fallback
+  let voyages: any[] = [];
+  try {
+    const saved = localStorage.getItem("sms_voyage_records");
+    if (saved) {
+      voyages = JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error("Error reading voyages for backup:", e);
+  }
 
-  const wsOverview = XLSX.utils.aoa_to_sheet(overviewRows);
-  autoFitColumns(wsOverview, overviewRows);
-  XLSX.utils.book_append_sheet(wb, wsOverview, "Passage Overview");
+  if (!Array.isArray(voyages) || voyages.length === 0) {
+    // Basic defaults if storage is empty
+    voyages = [
+      {
+        voyageNumber: "V.012-NORTH",
+        departurePort: { name: "Port of Los Angeles", country: "United States", locode: "USLAX" },
+        arrivalPort: { name: "Port of Tokyo", country: "Japan", locode: "JPTYO" },
+        etd: "2026-09-25T08:00",
+        atd: "2026-09-25T08:30",
+        eta: "2026-10-08T06:00",
+        cargoType: "Refrigerated Container Cargo & Agricultural Staples",
+        cargoQuantity: 72500,
+        cargoUnit: "MT",
+        loadingStatus: "Loaded",
+        distanceNm: 4820,
+        avgSpeedKts: 15.8,
+        status: "In Transit",
+        masterName: "Capt. Alexander Sterling",
+        chiefOfficerName: "Mateo Rodriguez",
+        remarks: "Active voyage en route. Great Circle navigation via northern Pacific corridor."
+      }
+    ];
+  }
 
-  const waypointRows: (string | number)[][] = [
-    ...createHeaderBlock("Passage Route Waypoint Track & Navigation Leg Coordinates", meta),
+  // Sheet 1: Port-to-Port Voyages Log
+  const voyageRows: (string | number)[][] = [
+    ...createHeaderBlock("Port-to-Port Voyage Records & Navigation Log", meta),
     [
-      "WAYPOINT NO.",
-      "WAYPOINT NAME",
-      "LATITUDE",
-      "LONGITUDE",
-      "LEG DISTANCE (NM)",
-      "CUMULATIVE DIST (NM)",
-      "TRUE COURSE (°T)",
-      "PLANNED SPEED (KTS)",
-      "MINIMUM UKC (M)",
-      "XTD PORT / STBD (NM)"
-    ],
-    [1, "Los Angeles Pilot Station", "33° 42.50' N", "118° 15.10' W", 0, 0, 248, 10.0, 5.2, 0.2],
-    [2, "San Pedro Sea Buoy Departure", "33° 39.10' N", "118° 17.50' W", 4.2, 4.2, 255, 14.5, 8.5, 0.5],
-    [3, "Santa Barbara Channel South", "33° 55.00' N", "119° 40.00' W", 72.8, 77.0, 268, 15.8, 25.0, 1.0],
-    [4, "Point Conception Ocean Departure", "34° 25.00' N", "121° 00.00' W", 71.5, 148.5, 282, 15.8, 150.0, 2.0],
-    [5, "Great Circle Waypoint Alpha", "38° 00.00' N", "140° 00.00' W", 980.0, 1128.5, 290, 15.8, 2000.0, 5.0],
-    [6, "Great Circle Vertex Bravo", "42° 30.00' N", "165° 00.00' W", 1190.0, 2318.5, 275, 15.8, 2500.0, 5.0],
-    [7, "Great Circle Waypoint Charlie", "41° 10.00' N", "170° 00.00' E", 1240.0, 3558.5, 260, 15.8, 2200.0, 5.0],
-    [8, "Inubo Saki Approach WP", "35° 40.00' N", "141° 15.00' E", 1120.0, 4678.5, 245, 15.8, 500.0, 2.0],
-    [9, "Nojima Zaki Traffic Separation", "34° 50.00' N", "139° 55.00' E", 85.0, 4763.5, 335, 13.0, 45.0, 0.5],
-    [10, "Uraga Suido Traffic Channel", "35° 12.00' N", "139° 44.00' E", 24.5, 4788.0, 350, 12.0, 18.0, 0.2],
-    [11, "Tokyo Bay Pilot Boarding Station", "35° 33.00' N", "139° 49.00' E", 32.0, 4820.0, 0, 8.0, 6.5, 0.1]
+      "VOYAGE ID",
+      "STATUS",
+      "DEPARTURE PORT",
+      "DEP COUNTRY",
+      "DEP UN/LOCODE",
+      "DESTINATION PORT",
+      "ARR COUNTRY",
+      "ARR UN/LOCODE",
+      "ETD (ESTIMATED DEPARTURE)",
+      "ATD (ACTUAL DEPARTURE)",
+      "ETA (ESTIMATED ARRIVAL)",
+      "ATA (ACTUAL ARRIVAL)",
+      "CARGO TYPE",
+      "QUANTITY",
+      "UNIT",
+      "LOADING STATUS",
+      "DISTANCE (NM)",
+      "AVG SPEED (KTS)",
+      "EST. STEAMING (HRS)",
+      "MASTER",
+      "CHIEF OFFICER",
+      "OPERATIONAL REMARKS"
+    ]
   ];
 
-  const wsWaypoints = XLSX.utils.aoa_to_sheet(waypointRows);
-  autoFitColumns(wsWaypoints, waypointRows);
-  XLSX.utils.book_append_sheet(wb, wsWaypoints, "Route Waypoints");
+  voyages.forEach(v => {
+    const steamingHours = v.avgSpeedKts > 0 ? (v.distanceNm / v.avgSpeedKts).toFixed(1) : "N/A";
+    voyageRows.push([
+      v.voyageNumber || "VOY-ENTRY",
+      (v.status || "Planned").toUpperCase(),
+      v.departurePort?.name || "Departure Port",
+      v.departurePort?.country || "N/A",
+      v.departurePort?.locode || "N/A",
+      v.arrivalPort?.name || "Arrival Port",
+      v.arrivalPort?.country || "N/A",
+      v.arrivalPort?.locode || "N/A",
+      v.etd ? v.etd.replace("T", " ") : "N/A",
+      v.atd ? v.atd.replace("T", " ") : "N/A",
+      v.eta ? v.eta.replace("T", " ") : "N/A",
+      v.ata ? v.ata.replace("T", " ") : "N/A",
+      v.cargoType || "General Cargo",
+      v.cargoQuantity ?? 0,
+      v.cargoUnit || "MT",
+      v.loadingStatus || "Loaded",
+      v.distanceNm || 0,
+      v.avgSpeedKts || 15.0,
+      steamingHours,
+      v.masterName || "Master",
+      v.chiefOfficerName || "Chief Officer",
+      v.remarks || "SOLAS Passage Plan Compliant."
+    ]);
+  });
+
+  const wsVoyages = XLSX.utils.aoa_to_sheet(voyageRows);
+  autoFitColumns(wsVoyages, voyageRows);
+  XLSX.utils.book_append_sheet(wb, wsVoyages, "Port-to-Port Voyages");
+
+  // Sheet 2: Voyage & Port Statistics Summary
+  const totalCompleted = voyages.filter(v => v.status === "Completed").length;
+  const inTransitCount = voyages.filter(v => v.status === "In Transit").length;
+  const totalDist = voyages.reduce((sum, v) => sum + (v.distanceNm || 0), 0);
+  const completedDist = voyages.filter(v => v.status === "Completed").reduce((sum, v) => sum + (v.distanceNm || 0), 0);
+
+  // Port frequency
+  const portFreq: Record<string, number> = {};
+  voyages.forEach(v => {
+    const dep = `${v.departurePort?.name} (${v.departurePort?.locode || "PORT"})`;
+    const arr = `${v.arrivalPort?.name} (${v.arrivalPort?.locode || "PORT"})`;
+    portFreq[dep] = (portFreq[dep] || 0) + 1;
+    portFreq[arr] = (portFreq[arr] || 0) + 1;
+  });
+  const sortedPorts = Object.entries(portFreq).sort((a, b) => b[1] - a[1]);
+
+  const summaryRows: (string | number)[][] = [
+    ...createHeaderBlock("Voyage Fleet Analytics & Port Frequency Summary", meta),
+    ["METRIC / SUMMARY PARAMETER", "VALUE", "SPECIFICATION / BASIS"],
+    ["Total Port-to-Port Voyages Logged", voyages.length, "Recorded in SMS Voyage History"],
+    ["Total Voyages Completed", totalCompleted, "Final Discharge & Port Clearance Signed"],
+    ["Active In-Transit Voyages", inTransitCount, "Underway at Sea on Deep-Sea Passage"],
+    ["Total Distance Logged", `${totalDist.toLocaleString()} NM`, "Cumulative Steaming Mileage"],
+    ["Completed Distance Logged", `${completedDist.toLocaleString()} NM`, "Distance for Finalized Voyages"],
+    ["Top Port Call 1", sortedPorts[0] ? `${sortedPorts[0][0]} - ${sortedPorts[0][1]} calls` : "N/A", "Most Frequented Port"],
+    ["Top Port Call 2", sortedPorts[1] ? `${sortedPorts[1][0]} - ${sortedPorts[1][1]} calls` : "N/A", "Second Most Frequented"],
+    ["Top Port Call 3", sortedPorts[2] ? `${sortedPorts[2][0]} - ${sortedPorts[2][1]} calls` : "N/A", "Third Most Frequented"],
+    ["Vessel Operational Status", "COMMERCIAL PASSAGE", "Compliant with SOLAS V/34 Passage Planning"]
+  ];
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  autoFitColumns(wsSummary, summaryRows);
+  XLSX.utils.book_append_sheet(wb, wsSummary, "Voyage Summary Stats");
 
   const filename = `${meta.vesselName.replace(/\s+/g, "_")}_Voyage_Planning_Backup_${meta.dateStr}.xlsx`;
   XLSX.writeFile(wb, filename);
